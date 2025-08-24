@@ -9,6 +9,7 @@
 #include "ata.h"
 #include "render.h"
 #include "gui.h"
+#include "serial.h"
 
 #ifndef DISK_SECTORS
 #define DISK_SECTORS 2880
@@ -31,6 +32,9 @@ static void list_cb(const char* name, int isDir){ console_write(isDir?"[D] ":"[F
 
 // Forward declaration for recursive remove
 static int vfs_rm_recursive(const char* path);
+
+// Forward decl for RM reboot path
+static void do_reboot_realmode(void);
 
 // Simple path resolver relative to CWD. Supports '.' and '..'.
 static void path_resolve(char* out, const char* cwd, const char* in){
@@ -82,10 +86,111 @@ static void path_resolve(char* out, const char* cwd, const char* in){
 
 static void u32_to_dec(uint32_t v, char* buf){ int n=0; if(v==0){ buf[n++]='0'; buf[n]=0; return; } char tmp[16]; int t=0; while(v){ tmp[t++] = (char)('0'+(v%10)); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
 
+// History/input helpers
+static void input_set_line(char* line, int* plen, const char* src){
+    while(*plen > 0){ console_putc('\b'); (*plen)--; }
+    int i=0; if (src){ while(src[i] && i < 255){ line[i]=src[i]; i++; } }
+    line[i]=0; *plen=i; console_write(line);
+}
+
+#define HISTORY_MAX 16
+static char history_buf[HISTORY_MAX][256];
+static int history_head = 0;     // next insert position
+static int history_count = 0;    // number of valid entries (<= HISTORY_MAX)
+static int history_browse = -1;  // -1 = not browsing; 0=newest, 1=older, ...
+static char edit_saved[256];     // saved in-progress edit when starting browse
+static int edit_saved_valid = 0;
+
+static const char* history_get_offset(int offset){
+    if (offset < 0 || offset >= history_count) return 0;
+    int idx = history_head - 1 - offset; if (idx < 0) idx += HISTORY_MAX;
+    return history_buf[idx];
+}
+
+static int str_eq(const char* a, const char* b){ int i=0; while(a && b && a[i] && b[i]){ if(a[i]!=b[i]) return 0; i++; } return a && b && a[i]==0 && b[i]==0; }
+static void str_copy(char* dst, const char* src, int cap){ int i=0; if(cap<=0) return; while(src && src[i] && i<cap-1){ dst[i]=src[i]; i++; } dst[i]=0; }
+
 // Parse decimal uint32 from token (null-terminated)
 static int parse_u32_dec(const char* s, uint32_t* out){ if(!s||!*s) return -1; uint32_t v=0; for(int i=0; s[i]; ++i){ char c=s[i]; if(c<'0'||c>'9') return -2; uint32_t d=(uint32_t)(c-'0'); uint32_t nv = v*10u + d; if (nv < v) return -3; v = nv; } *out=v; return 0; }
 // Parse hex byte from 1-2 hex digits
 static int parse_hex8(const char* s, uint8_t* out){ if(!s||!*s) return -1; uint32_t v=0; int i=0; for(; s[i] && i<2; ++i){ char c=s[i]; if(c>='0'&&c<='9') v = (v<<4) | (uint32_t)(c-'0'); else { char lc = (c>='A'&&c<='Z')?(c+32):c; if(lc>='a'&&lc<='f') v = (v<<4) | (uint32_t)(10 + lc-'a'); else return -2; } } if(s[i]) return -3; *out=(uint8_t)v; return 0; }
+
+// Short busy-wait
+static inline void io_wait_short(void){ for(volatile int i=0;i<10000;++i) __asm__ __volatile__("nop"); }
+
+// --- Reset fallbacks: KBC (0x64) and triple fault ---
+static void kbc_reset(void){
+    // Wait for KBC input buffer to be empty, then send 0xFE (pulse reset)
+    for(volatile int i=0;i<100000;i++){
+        if ((inb(0x64) & 0x02) == 0) break;
+    }
+    serial_writeln("[sys] reset fallback: KBC 0x64");
+    outb(0x64, 0xFE);
+}
+
+static void triple_fault(void){
+    serial_writeln("[sys] reset fallback: triple fault");
+    struct { uint16_t limit; uint32_t base; } __attribute__((packed)) idtr = {0, 0};
+    __asm__ __volatile__("lidt %0" : : "m"(idtr));
+    __asm__ __volatile__("int3");
+    for(;;){ __asm__ __volatile__("hlt"); }
+}
+
+// Cold reboot: warm vector, mask PIC, disable NMI, KBC reset with waits, then CF9 as fallback, finally HLT
+static void reboot_machine(void){
+    __asm__ __volatile__("cli");
+    serial_writeln("[sys] reboot: real-mode BIOS int19");
+    console_writeln("rebooting (BIOS)...");
+    do_reboot_realmode();
+    for(;;){ __asm__ __volatile__("hlt"); }
+}
+
+// Fast restart: KBC + CF9 fallback
+static void restart_machine_fast(void){
+    __asm__ __volatile__("cli");
+    serial_writeln("[sys] restart: KBC, fallback CF9");
+
+    // Mask PIC, disable NMI
+    outb(0x21, 0xFF); outb(0xA1, 0xFF);
+    uint8_t cmos = inb(0x70); outb(0x70, (uint8_t)(cmos | 0x80));
+
+    // Warm vector for friendliness (not strictly required)
+    volatile uint16_t* wrv = (volatile uint16_t*)0x0467; wrv[0]=0xFFF0; wrv[1]=0xF000;
+    volatile uint16_t* warm = (volatile uint16_t*)0x0472; *warm=0x1234;
+
+    // KBC path
+    for (int i=0;i<1000;i++){ uint8_t st=inb(0x64); if(st & 0x01) (void)inb(0x60); else break; }
+    for (int i=0;i<100000;i++){ if ((inb(0x64) & 0x02) == 0) break; }
+    outb(0x64, 0xFE);
+
+    for(volatile int i=0;i<50000;i++) __asm__ __volatile__("nop");
+
+    // CF9 fallback
+    uint8_t c = inb(0xCF9);
+    outb(0xCF9, (uint8_t)((c & (uint8_t)~0x01) | 0x02));
+    for(volatile int i=0;i<20000;i++) __asm__ __volatile__("nop");
+    outb(0xCF9, 0x0E);
+
+    for(;;){ __asm__ __volatile__("hlt"); }
+}
+
+// Power off machine: try common emulator backdoors, then halt
+static void poweroff_machine(void){
+    __asm__ __volatile__("cli");
+    // Bochs/QEMU older: port 0xB004 value 0x2000
+    outw(0xB004, 0x2000);
+    io_wait_short();
+    // QEMU (PIIX4 ACPI): PM1a_CNT at 0x604, SLP_TYP=0x2000 | SLP_EN
+    outw(0x604, 0x2000);
+    io_wait_short();
+    // VirtualBox/others
+    outw(0x4004, 0x3400);
+    io_wait_short();
+    // QEMU isa-debug-exit (if configured with -device isa-debug-exit,iobase=0xf4)
+    outb(0xF4, 0x00);
+    // Fallback: halt forever
+    for(;;){ __asm__ __volatile__("hlt"); }
+}
 
 #ifdef DISK_MODE_HDD
 static void mbr_zero(uint8_t* m){ for(int i=0;i<512;++i) m[i]=0; m[510]=0x55; m[511]=0xAA; }
@@ -137,22 +242,28 @@ static int vfs_rm_recursive(const char* path){
 }
 
 void kernel_main() {
+    serial_init();
+    serial_writeln("[foxos] serial online");
+
     console_init();
     console_set_color(0x0F, 0x00);
     console_writeln("foxos console ready");
+    serial_writeln("[foxos] console ready");
 
     mem_init();
+    serial_writeln("[foxos] memory init done");
 
     vfs_init();
     vfs_mount_ramfs();
     initrd_load_into_ramfs();
     console_writeln("vfs: ramfs mounted, initrd loaded");
+    serial_writeln("[foxos] vfs/initrd ready");
 
 #ifdef DISK_MODE_HDD
     ata_init();
+    serial_writeln("[foxos] ata init done");
 #endif
 
-    // Initialize GUI (disabled by default to avoid black screen). Define ENABLE_GUI to re-enable.
 #ifdef ENABLE_GUI
     gui_init();
 #else
@@ -160,17 +271,83 @@ void kernel_main() {
 #endif
 
     keyboard_init();
+    serial_writeln("[foxos] keyboard ready");
 
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
+    history_head = 0; history_count = 0; history_browse = -1; edit_saved_valid = 0; edit_saved[0]=0;
+
+    // Test script state (auto-injected commands when 'test' is entered)
+#ifdef DISK_MODE_HDD
+    static const char* test_script[] = {
+        "clear","ls","mkdir /test","echo hello > /test/hello.txt","ls /test","cat /test/hello.txt","stat /test","disk info","disk list"
+    };
+#else
+    static const char* test_script[] = {
+        "clear","ls","mkdir /test","echo hello > /test/hello.txt","ls /test","cat /test/hello.txt","stat /test"
+    };
+#endif
+    int test_mode = 0; int test_index = 0; const int test_count = (int)(sizeof(test_script)/sizeof(test_script[0]));
+
     console_write("foxos> ");
 
     for (;;) {
-        int ch = keyboard_getchar();
-        if (ch < 0) { for (int i=0;i<1000;++i) io_wait(); continue; }
+        int ch;
+        // Inject next test command if in test mode
+        if (test_mode && test_index < test_count) {
+            const char* cmd = test_script[test_index++];
+            input_set_line(line, &len, cmd);
+            ch = '\n';
+            if (test_index >= test_count) test_mode = 0;
+        } else {
+            ch = keyboard_getchar();
+            if (ch == -1) { for (int i=0;i<1000;++i) io_wait(); continue; }
+        }
+
+        // History navigation first
+        if (ch == KBD_KEY_UP) {
+            if (history_count == 0) continue;
+            if (history_browse == -1){
+                // entering browse: save current edit
+                str_copy(edit_saved, line, sizeof(edit_saved)); edit_saved_valid = 1;
+                history_browse = 0;
+            } else if (history_browse < history_count - 1) {
+                history_browse++;
+            }
+            const char* src = history_get_offset(history_browse);
+            if (src) input_set_line(line, &len, src);
+            continue;
+        } else if (ch == KBD_KEY_DOWN) {
+            if (history_browse == -1) continue; // nothing to do
+            if (history_browse == 0){
+                // leave browse, restore saved edit
+                history_browse = -1;
+                if (edit_saved_valid) input_set_line(line, &len, edit_saved); else input_set_line(line, &len, "");
+            } else {
+                history_browse--;
+                const char* src = history_get_offset(history_browse);
+                if (src) input_set_line(line, &len, src);
+            }
+            continue;
+        }
+
         if (ch == '\n') {
             console_putc('\n');
             line[len] = '\0';
+            serial_write("[cmd] "); serial_writeln(line);
+            // commit history (before we mutate case)
+            if (len > 0) {
+                // avoid consecutive duplicate
+                int last_idx = (history_head - 1 + HISTORY_MAX) % HISTORY_MAX;
+                if (!(history_count > 0 && str_eq(history_buf[last_idx], line))) {
+                    str_copy(history_buf[history_head], line, sizeof(history_buf[history_head]));
+                    history_head = (history_head + 1) % HISTORY_MAX;
+                    if (history_count < HISTORY_MAX) history_count++;
+                }
+            }
+            // reset browsing state after execution
+            history_browse = -1; edit_saved_valid = 0; edit_saved[0]=0;
+
             // lowercase command keyword only
             int i=0; while(line[i] && line[i]!=' '){ line[i]=to_lower(line[i]); i++; }
 
@@ -180,6 +357,10 @@ void kernel_main() {
                 console_writeln("commands:");
                 console_writeln("  help                 - show this help");
                 console_writeln("  clear                - clear screen");
+                console_writeln("  reboot               - reboot the machine");
+                console_writeln("  restart              - reboot (fast, CF9)");
+                console_writeln("  shutdown             - power off the machine");
+                console_writeln("  test                 - run scripted demo");
                 console_writeln("  ls [path]            - list directory");
                 console_writeln("  pwd                  - print working dir");
                 console_writeln("  cd <dir>             - change directory");
@@ -205,6 +386,10 @@ void kernel_main() {
                 console_writeln("  disk mkpart i s c t  - set entry i=start,count,typeHex");
                 console_writeln("  disk clear           - zero the MBR (keep 0x55AA)");
 #endif
+            } else if (streq(line, "test")) {
+                console_writeln("test: starting");
+                test_mode = 1;
+                test_index = 0;
             } else if (streq(line, "ls")) {
                 vfs_ls(cwd, list_cb);
             } else if (startswith(line, "ls ")) {
@@ -357,13 +542,65 @@ void kernel_main() {
 #else
                 console_writeln("gui disabled");
 #endif
+            } else if (streq(line, "reboot")) {
+                serial_writeln("[sys] reboot requested");
+                console_writeln("rebooting...");
+                reboot_machine();
+            } else if (streq(line, "restart")) {
+                serial_writeln("[sys] restart requested (BIOS)");
+                console_writeln("restarting (BIOS)...");
+                do_reboot_realmode();
+            } else if (streq(line, "shutdown") || streq(line, "poweroff")) {
+                serial_writeln("[sys] shutdown requested");
+                console_writeln("powering off...");
+                poweroff_machine();
             }
             len = 0;
             console_write("foxos> ");
         } else if (ch == '\b') {
             if (len > 0) { len--; console_putc('\b'); }
         } else if (ch >= 32 && ch <= 126) {
+            // typing cancels browse mode
+            if (history_browse != -1){ history_browse = -1; edit_saved_valid = 0; }
             if (len < (int)sizeof(line)-1) { line[len++] = (char)ch; console_putc((char)ch); }
         }
     }
+}
+
+// 16-bit real-mode reboot stub (copied to 0x70000 and jumped to in real mode)
+// BIOS bootstrap: int 19h to restart the boot process from BIOS
+static const uint8_t REBOOT16_STUB[] = {
+    0xFA,                         // cli
+    0x31,0xC0,                   // xor ax, ax
+    0x8E,0xD8,                   // mov ds, ax
+    0x8E,0xC0,                   // mov es, ax
+    0x8E,0xD0,                   // mov ss, ax
+    0xBC,0x00,0x90,             // mov sp, 0x9000
+    // warm flag @ 0x0472 = 0x1234 (optional for BIOS)
+    0xC7,0x06,0x72,0x04,0x34,0x12, // mov word [0x0472], 0x1234
+    // disable NMI
+    0xB0,0x80,                   // mov al, 0x80
+    0xE6,0x70,                   // out 0x70, al
+    // Call BIOS bootstrap loader
+    0xCD,0x19,                   // int 0x19
+    // If returns, halt
+    0xF4,                         // hlt
+    0xEB,0xFE                    // jmp $
+};
+
+// Provided by kernel_entry.asm: switches from PM to real mode and far-jumps to 0x7000:0000
+extern void pm_to_rm_reboot(void);
+
+// Copy stub to 0x00070000 and jump to real-mode reboot
+static void do_reboot_realmode(void){
+    __asm__ __volatile__("cli");
+    serial_writeln("[sys] reboot: switching to real mode (warm KBC)");
+
+    volatile uint8_t* dst = (volatile uint8_t*)0x00070000;
+    for (unsigned i=0;i<sizeof(REBOOT16_STUB);++i) dst[i] = REBOOT16_STUB[i];
+
+    // Jump to 16-bit real mode stub (never returns)
+    pm_to_rm_reboot();
+
+    for(;;){ __asm__ __volatile__("hlt"); }
 }

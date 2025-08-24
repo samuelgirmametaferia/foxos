@@ -14,6 +14,7 @@ static inline int kbd_output_full(void) { return (inb(KBD_STATUS) & 0x01) != 0; 
 // Modifier state
 static uint8_t shift_down = 0;   // either LSHIFT (0x2A) or RSHIFT (0x36)
 static uint8_t caps_lock = 0;    // toggled by 0x3A
+static uint8_t e0_prefix = 0;    // track 0xE0 extended scancodes
 
 static void buf_put(char c) {
     unsigned n = (head + 1) & (sizeof(buf)-1);
@@ -49,23 +50,37 @@ static const char shifted_map[128] = {
 
 void keyboard_init(void) {
     head = tail = 0;
-    shift_down = 0; caps_lock = 0;
+    shift_down = 0; caps_lock = 0; e0_prefix = 0;
     while (kbd_output_full()) (void)inb(KBD_DATA);
     kbd_wait_input_empty(); outb(0x64, 0xAE); // enable keyboard
     kbd_wait_input_empty(); outb(0x60, 0xF4); // enable scanning
     if (kbd_output_full()) (void)inb(KBD_DATA); // ack
 }
 
-// Polling read with modifier handling
+// Polling read with modifier handling and arrow detection
 int keyboard_getchar(void) {
     if (!kbd_output_full()) return buf_get();
 
     uint8_t sc = inb(KBD_DATA);
-    if (sc == 0xE0) return buf_get(); // ignore extended for now
+    if (sc == 0xE0) { e0_prefix = 1; return buf_get(); }
 
     if (sc & 0x80) {
         uint8_t make = sc & 0x7F;
+        if (e0_prefix) {
+            // Ignore key releases of extended keys for now
+            e0_prefix = 0;
+            return buf_get();
+        }
         if (make == 0x2A || make == 0x36) shift_down = 0; // shift released
+        return buf_get();
+    }
+
+    if (e0_prefix) {
+        e0_prefix = 0;
+        // Handle extended arrows: Up=0x48, Down=0x50
+        if (sc == 0x48) return KBD_KEY_UP;
+        if (sc == 0x50) return KBD_KEY_DOWN;
+        // Other extended keys ignored for now
         return buf_get();
     }
 

@@ -23,6 +23,7 @@ KERNEL_RENDER_C="$KDIR/render.c"
 KERNEL_WINDOW_C="$KDIR/window.c"
 KERNEL_FB_C="$KDIR/fb.c"
 KERNEL_GUI_C="$KDIR/gui.c"
+KERNEL_SERIAL_C="$KDIR/serial.c"
 KERNEL_ENTRY_ASM="$KDIR/kernel_entry.asm"
 LINKER_SCRIPT="$KDIR/kernel.ld"
 KOBJ_C="$BUILD/kernel.o"
@@ -37,6 +38,7 @@ KOBJ_RENDER="$BUILD/render.o"
 KOBJ_WINDOW="$BUILD/window.o"
 KOBJ_FB="$BUILD/fb.o"
 KOBJ_GUI="$BUILD/gui.o"
+KOBJ_SERIAL="$BUILD/serial.o"
 KOBJ_ENTRY="$BUILD/kernel_entry.o"
 KELF="$BUILD/kernel.elf"
 KBIN="$BUILD/kernel.bin"
@@ -97,12 +99,15 @@ gcc $CFLAGS_COMMON -c "$KERNEL_FB_C" -o "$KOBJ_FB"
 echo "Compiling gui..."
 gcc $CFLAGS_COMMON -c "$KERNEL_GUI_C" -o "$KOBJ_GUI"
 
+echo "Compiling serial..."
+gcc $CFLAGS_COMMON -c "$KERNEL_SERIAL_C" -o "$KOBJ_SERIAL"
+
 echo "Assembling kernel entry..."
 nasm -f elf32 "$KERNEL_ENTRY_ASM" -o "$KOBJ_ENTRY"
 
 echo "Linking kernel (ELF via $LINKER_SCRIPT)..."
 ld -m elf_i386 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_RENDER" "$KOBJ_WINDOW" "$KOBJ_FB" "$KOBJ_GUI"
+  "$KOBJ_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_RENDER" "$KOBJ_WINDOW" "$KOBJ_FB" "$KOBJ_GUI" "$KOBJ_SERIAL"
 
 echo "Converting kernel to flat binary..."
 objcopy -O binary "$KELF" "$KBIN"
@@ -168,7 +173,7 @@ if (( MAKE_HDD_IMAGE )); then
   echo "Writing kernel right after VBR..."
   dd if="$KBIN" of="$HDD_IMG" bs=512 seek=$(( ${PART_START:-2048} + 1 )) conv=notrunc status=none
   echo "Done. HDD Image: $HDD_IMG"
-  echo "Run: qemu-system-i386 -m 64 -boot a -drive file=$IMG,if=floppy,format=raw -drive id=hdd,file=$HDD_IMG,if=none,format=raw -device ide-hd,drive=hdd,bus=ide.0"
+  echo "Run: qemu-system-i386 -m 64 -serial stdio -boot a -drive file=$IMG,if=floppy,format=raw -drive id=hdd,file=$HDD_IMG,if=none,format=raw -device ide-hd,drive=hdd,bus=ide.0"
 else
-  echo "Run: qemu-system-i386 -m 64 -boot a -drive file=$IMG,if=floppy,format=raw"
+  echo "Run: qemu-system-i386 -m 64 -serial stdio -boot a -drive file=$IMG,if=floppy,format=raw"
 fi
