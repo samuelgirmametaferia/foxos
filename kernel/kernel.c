@@ -187,6 +187,9 @@ void kernel_main(const boot_info_t* boot) {
     mem_init(boot);
     serial_writeln("[foxos] memory init done");
 
+    /* Set up identity paging now that PMM is initialized and reserved regions are known */
+    setup_identity_paging();
+
     /* Auto-print arch and PMM info for headless testing */
     {
         char pb[8]; char capb[32];

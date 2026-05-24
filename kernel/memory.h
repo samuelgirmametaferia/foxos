@@ -30,3 +30,7 @@ int uc_read(uchandle_t h, uint64_t offset, void* dst, uint64_t len);
 
 uint64_t uc_size(uchandle_t h);
 uint64_t uc_used(uchandle_t h);
+
+/* Expose helpers for paging setup */
+void setup_identity_paging(void);
+uint64_t pmm_phys_end_bytes(void);

@@ -323,6 +323,9 @@ void mem_init(const boot_info_t* boot) {
         phys_end = initial + (1ull * 1024ull * 1024ull * 1024ull);
     }
 
+    /* record phys_end globally for paging setup */
+    pmm_phys_end = phys_end;
+
     /* allocate bitmap area immediately after kernel BSS */
     uint64_t tentative_frames = (phys_end > initial) ? ((phys_end - initial) / PAGE_SIZE) : 0;
     uint64_t tentative_words = (tentative_frames + 31u) / 32u;
@@ -389,8 +392,78 @@ void mem_init(const boot_info_t* boot) {
     heap_head = NULL;
 }
 
-paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
-    if (pages == 0 || pages > pmm_free || pages > pmm_total) return 0;
+/* global recorded physical end (bytes) for paging setup */
+static uint64_t pmm_phys_end = 0;
+
+uint64_t pmm_phys_end_bytes(void) { return pmm_phys_end; }
+
+void setup_identity_paging(void) {
+    serial_writeln("[mem] setup_identity_paging start");
+    if (pmm_phys_end == 0) {
+        serial_writeln("[mem] phys_end unknown, skipping paging");
+        return;
+    }
+
+    uint64_t bytes = pmm_phys_end;
+    /* compute number of 1GiB PDs needed */
+    uint64_t pd_count = (bytes + ((1ull<<30) - 1ull)) >> 30;
+    if (pd_count == 0) pd_count = 1;
+    if (pd_count > 512) pd_count = 512;
+
+    uint64_t pages_needed = 2 + pd_count; /* PML4 + PDPT + PDs */
+    serial_write("[mem] paging: allocating pages for page-tables: "); serial_u64(pages_needed); serial_writeln("");
+    paddr_t base = pmm_alloc_contiguous_pages(pages_needed);
+    if (!base) { serial_writeln("[mem] paging: pmm_alloc_contiguous_pages failed"); return; }
+
+    /* zero allocated pages */
+    memzero((void*)(uintptr_t)base, (uint32_t)(pages_needed * PAGE_SIZE));
+
+    uint64_t pml4_phys = base;
+    uint64_t pdpt_phys = base + PAGE_SIZE;
+    uint64_t pd_phys_base = base + (2 * PAGE_SIZE);
+
+    /* set PML4[0] -> PDPT */
+    uint64_t* pml4 = (uint64_t*)(uintptr_t)pml4_phys;
+    uint64_t* pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
+    pml4[0] = pdpt_phys | 0x03u;
+
+    /* fill PDPT entries */
+    for (uint64_t i = 0; i < pd_count; ++i) {
+        pdpt[i] = (pd_phys_base + i * PAGE_SIZE) | 0x03u;
+    }
+
+    /* fill PDs with 2MiB pages */
+    uint64_t page_index = 0;
+    for (uint64_t i = 0; i < pd_count; ++i) {
+        uint64_t* pd = (uint64_t*)(uintptr_t)(pd_phys_base + i * PAGE_SIZE);
+        for (uint64_t e = 0; e < 512; ++e) {
+            uint64_t phys = (page_index << 21); /* page_index * 2MiB */
+            if (phys >= bytes) { pd[e] = 0; }
+            else { pd[e] = phys | 0x83u; }
+            page_index++;
+        }
+    }
+
+    serial_writeln("[mem] paging: page-tables built; enabling paging now");
+
+    /* Enable PAE in CR4 */
+    unsigned long tmp;
+    asm volatile ("mov %%cr4, %0" : "=r" (tmp));
+    tmp |= (1ul << 5);
+    asm volatile ("mov %0, %%cr4" :: "r" (tmp));
+
+    /* Load CR3 with PML4 physical address */
+    asm volatile ("mov %0, %%cr3" :: "r" (pml4_phys));
+
+    /* Enable paging (CR0.PG) */
+    asm volatile ("mov %%cr0, %0" : "=r" (tmp));
+    tmp |= 0x80000000ul;
+    asm volatile ("mov %0, %%cr0" :: "r" (tmp));
+
+    serial_writeln("[mem] paging enabled");
+}
+
+paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {    if (pages == 0 || pages > pmm_free || pages > pmm_total) return 0;
 
     uint64_t run = 0;
     uint64_t start = 0;
