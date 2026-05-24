@@ -13,6 +13,7 @@
 #include "timer.h"
 #include "tests.h"
 #include "relocation.h"
+#include "relocator.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -235,6 +236,10 @@ void kernel_main(const boot_info_t* boot) {
     keyboard_init();
     serial_writeln("[foxos] keyboard ready");
 
+    /* init relocator */
+    relocator_init();
+    serial_writeln("[foxos] relocator initialized");
+
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
     history_head = 0; history_count = 0; history_browse = -1; edit_saved_valid = 0; edit_saved[0]=0;
@@ -246,7 +251,7 @@ void kernel_main(const boot_info_t* boot) {
 
     for (;;) {
         int ch = keyboard_getchar();
-        if (ch == -1) { __asm__ __volatile__("hlt"); continue; }
+        if (ch == -1) { relocator_poll(); __asm__ __volatile__("hlt"); continue; }
 
         if (ch == KBD_KEY_UP) {
             if (history_count == 0) continue;
@@ -386,6 +391,25 @@ void kernel_main(const boot_info_t* boot) {
                 char pb[32]; u64_to_dec((uint64_t)s.last_passes, pb);
                 console_write("last passes: "); console_writeln(pb);
                 console_write("running: "); console_writeln(s.running?"1":"0");
+            } else if (streq(line, "relocator-start")) {
+                serial_writeln("[cmd] relocator-start");
+                relocator_start(); console_writeln("relocator started");
+            } else if (streq(line, "relocator-stop")) {
+                serial_writeln("[cmd] relocator-stop");
+                relocator_stop(); console_writeln("relocator stopped");
+            } else if (startswith(line, "relocator-threshold ")) {
+                uint64_t v=0; if (parse_u64_dec(line+20,&v)==0) { relocator_set_threshold(v); console_writeln("ok"); }
+            } else if (startswith(line, "relocator-interval ")) {
+                uint64_t v=0; if (parse_u64_dec(line+18,&v)==0) { relocator_set_interval(v); console_writeln("ok"); }
+            } else if (streq(line, "relocator-status")) {
+                relocator_status_t rs = relocator_get_status();
+                char mb[32]; u64_to_dec((uint64_t)rs.last_moved, mb);
+                console_write("last moved: "); console_writeln(mb);
+                char pb[32]; u64_to_dec(rs.threshold_pages, pb);
+                console_write("threshold pages: "); console_writeln(pb);
+                char ib[32]; u64_to_dec(rs.interval_ms, ib);
+                console_write("interval ms: "); console_writeln(ib);
+                console_write("enabled: "); console_writeln(rs.enabled?"1":"0");
             } else if (streq(line, "pmm")) {
                 serial_writeln("[cmd] pmm");
                 pmm_dump_stats();
