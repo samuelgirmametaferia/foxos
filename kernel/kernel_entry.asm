@@ -52,6 +52,9 @@ pd15:   resq 512
 
 section .text
 kernel_entry:
+    ; save boot_info pointer in rbp (callee-saved)
+    mov rbp, rdi
+
     ; clear BSS
     lea rdi, [__bss_start]
     lea rcx, [__bss_end]
@@ -62,9 +65,6 @@ kernel_entry:
     ; setup stack
     lea rsp, [kernel_stack_top]
     and rsp, -16
-
-    ; save boot_info pointer on the new stack
-    push rdi
 
     ; Build identity page tables to cover up to 16GiB (map 0..16GiB using 2MiB pages)
     ; Layout in BSS: pml4, pdpt, pd0..pd15
@@ -238,7 +238,7 @@ kernel_entry:
     out dx, al
 
     ; restore boot_info pointer and call C entry
-    pop rdi
+    mov rdi, rbp
     call kernel_main
 
     ; serial marker 'E' after return (should not happen)
