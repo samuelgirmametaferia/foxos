@@ -48,7 +48,7 @@ void run_alloc_stress(void) {
 void run_boot_self_tests(void) {
     serial_writeln("[tests] boot self-tests start");
     /* Simple sanity: allocate and free a contiguous block */
-    paddr_t a = pmm_alloc_contiguous_pages(2);
+    paddr_t a = pmm_alloc_contiguous_pages(8);
     if (a) {
         serial_writeln("[tests] pmm_alloc_contiguous_pages(8) ok");
         pmm_free_contiguous_pages(a, 8);
