@@ -401,6 +401,14 @@ void mem_init(const boot_info_t* boot) {
         if (!frame_is_used(i)) pmm_free++;
     }
 
+    /* sanity checks and debug dump */
+    serial_write("[trace] pmm_base="); serial_u64((uint64_t)pmm_base); serial_write(" pmm_total="); serial_u64(pmm_total); serial_write(" pmm_free="); serial_u64(pmm_free); serial_write(" bmp_words="); serial_u64(pmm_bitmap_words); serial_writeln("");
+    if (pmm_free > pmm_total) { serial_writeln("[ERROR] pmm_free > pmm_total"); }
+    /* dump first few bitmap words */
+    for (uint64_t w = 0; w < pmm_bitmap_words && w < 16; ++w) {
+        serial_write("[trace] bmp["); serial_u64(w); serial_write("]="); serial_u64((uint64_t)pmm_bitmap[w]); serial_writeln("");
+    }
+
     /* initialize uc_table */
     for (uint32_t i = 0; i < MAX_UC; ++i) {
         uc_table[i].magic = 0;
@@ -518,13 +526,17 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
         return 0;
     }
 
-    /* For multiple pages, use a simple bounded scan (safe, slower). */
-    uint64_t start = 0;
+    /* For multiple pages, use a bounded scan with a skip equal to the failing offset to speed up progress. */
     uint64_t limit = (pmm_total >= pages) ? (pmm_total - pages + 1) : 0;
-    for (uint64_t i = 0; i < limit; ++i) {
+    uint64_t i = last_idx % (pmm_total ? pmm_total : 1);
+    if (i >= limit) i = 0;
+    uint64_t scanned = 0;
+    while (i < limit && scanned < pmm_total) {
+        uint64_t skip = 1;
         bool ok = true;
+        uint64_t bad_j = 0;
         for (uint64_t j = 0; j < pages; ++j) {
-            if (frame_is_used(i + j)) { ok = false; break; }
+            if (frame_is_used(i + j)) { ok = false; bad_j = j; skip = j + 1; break; }
         }
         if (ok) {
             for (uint64_t j = 0; j < pages; ++j) frame_mark_used(i + j);
@@ -534,9 +546,14 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
             serial_write(" addr="); serial_u64((uint64_t)addr); serial_writeln("");
             return addr;
         }
-        if ((i & 0x3FFu) == 0) {
-            serial_write("[trace] pmm scan at idx="); serial_u64(i); serial_writeln("");
+
+        /* print occasional progress */
+        if ((scanned & 0x3FFu) == 0) {
+            serial_write("[trace] pmm scan at idx="); serial_u64(i); serial_write(" bad_j="); serial_u64(bad_j); serial_writeln("");
         }
+
+        i += skip;
+        scanned += skip;
     }
 
     serial_writeln("[trace] pmm_alloc_contiguous_pages no space (multi)");
