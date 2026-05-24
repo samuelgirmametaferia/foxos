@@ -296,6 +296,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  allocstress          - run allocation stress test only");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
                 console_writeln("  pmm                  - show PMM stats and UC handles");
+            console_writeln("  heapshrink           - release trailing free heap blocks to PMM");
             } else if (streq(line, "arch")) {
                 char pb[8], capb[16];
                 u32_to_dec((uint32_t)(sizeof(void*) * 8u), pb);
@@ -365,6 +366,10 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "pmm")) {
                 serial_writeln("[cmd] pmm");
                 pmm_dump_stats();
+            } else if (streq(line, "heapshrink")) {
+                serial_writeln("[cmd] heapshrink");
+                heap_shrink_all();
+                console_writeln("heapshrink done");
             } else if (streq(line, "reboot")) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {

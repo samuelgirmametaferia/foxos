@@ -39,3 +39,6 @@ uint64_t pmm_phys_end_bytes(void);
 
 /* Debug helpers */
 void pmm_dump_stats(void);
+
+/* Heap maintenance */
+void heap_shrink_all(void);

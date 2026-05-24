@@ -525,6 +525,35 @@ uint64_t pmm_free_pages(void) {
     return pmm_free;
 }
 
+void heap_shrink_all(void) {
+    /* Walk to the last heap block and free trailing free blocks back to PMM */
+    heap_block_t* cur = heap_head;
+    heap_block_t* prev = NULL;
+    if (!cur) return;
+    while (cur->next) { prev = cur; cur = cur->next; }
+
+    /* While last block is free, release it */
+    while (cur && cur->free) {
+        uintptr_t block_addr = (uintptr_t)cur;
+        uint32_t total = (uint32_t)(sizeof(heap_block_t) + cur->size);
+        uint32_t pages = (total + PAGE_SIZE - 1u) / PAGE_SIZE;
+        /* unlink */
+        if (prev) prev->next = NULL; else heap_head = NULL;
+        /* if we can free contiguous pages starting at block_addr */
+        pmm_free_contiguous_pages((paddr_t)block_addr, pages);
+        /* move to previous tail */
+        if (prev) {
+            /* find new prev */
+            heap_block_t* p2 = heap_head; heap_block_t* pprev = NULL;
+            while (p2 && p2->next) { pprev = p2; p2 = p2->next; }
+            cur = p2; prev = pprev;
+        } else {
+            /* list now empty */
+            cur = NULL; prev = NULL; break;
+        }
+    }
+}
+
 void pmm_dump_stats(void) {
     serial_writeln("[pmm] stats start");
     char buf[64];
