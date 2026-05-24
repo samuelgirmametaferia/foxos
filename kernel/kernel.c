@@ -342,13 +342,24 @@ void kernel_main(const boot_info_t* boot) {
                     console_write("type: "); console_writeln(st.isDir?"dir":"file");
                     if(!st.isDir){ console_write("size: "); char buf[32]; u64_to_dec(st.size, buf); console_writeln(buf);} else { console_write("children: "); char buf[32]; u64_to_dec(st.children, buf); console_writeln(buf);} }
                 else { console_writeln("stat: not found"); }
+            console_writeln("  runtests             - run boot self-tests + alloc stress");
+            console_writeln("  selftest             - run boot self-tests only");
+            console_writeln("  allocstress          - run allocation stress test only");
+            } else if (streq(line, "runtests")) {
+                serial_writeln("[cmd] runtests");
+                run_boot_self_tests(); run_alloc_stress(); console_writeln("runtests done");
+            } else if (streq(line, "selftest")) {
+                serial_writeln("[cmd] selftest");
+                run_boot_self_tests(); console_writeln("selftest done");
+            } else if (streq(line, "allocstress")) {
+                serial_writeln("[cmd] allocstress");
+                run_alloc_stress(); console_writeln("allocstress done");
             } else if (streq(line, "reboot")) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {
                 poweroff_machine();
             }
-            len = 0; console_write("foxos> "); serial_write("foxos> ");
-        } else if (ch == '\b') {
+            len = 0; console_write("foxos> "); serial_write("foxos> ");        } else if (ch == '\b') {
             if (len > 0) { len--; console_putc('\b'); }
         } else if (ch >= 32 && ch <= 126) {
             if (history_browse != -1){ history_browse = -1; edit_saved_valid = 0; }

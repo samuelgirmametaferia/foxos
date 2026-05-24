@@ -551,6 +551,19 @@ uchandle_t uc_alloc(uint64_t bytes) {
     if (!d) return 0;
 
     uint32_t allocated = 0;
+
+    /* If request is large, try contiguous allocation first for performance */
+    const uint32_t CONTIG_THRESHOLD = 16; /* pages */
+    if (need >= CONTIG_THRESHOLD) {
+        paddr_t base = pmm_alloc_contiguous_pages(need);
+        if (base) {
+            uint64_t start_idx = frame_index_for_addr(base);
+            for (uint32_t i = 0; i < need; ++i) d->chunk_idx[i] = (uint32_t)(start_idx + i);
+            allocated = need;
+        }
+    }
+
+    /* Fallback: allocate individual frames */
     for (; allocated < need; ++allocated) {
         paddr_t addr = pmm_alloc_frame();
         if (!addr) break;
