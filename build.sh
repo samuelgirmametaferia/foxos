@@ -24,6 +24,7 @@ KERNEL_KBD_C="$DRIVERS_DIR/keyboard.c"
 KERNEL_CONS_C="$DRIVERS_DIR/console.c"
 KERNEL_MEM_C="$KDIR/memory.c"
 KERNEL_TESTS_C="$KDIR/tests.c"
+KERNEL_RELOC_C="$KDIR/relocation.c"
 KERNEL_VFS_C="$FS_DIR/vfs.c"
 KERNEL_RAMFS_C="$FS_DIR/ramfs.c"
 KERNEL_INITRD_C="$FS_DIR/initrd.c"
@@ -33,6 +34,7 @@ KERNEL_ENTRY_C="$BOOT_DIR/uefi_main.c"
 LINKER_SCRIPT="$KDIR/kernel.ld"
 
 KOBJ_TESTS="$BUILD/tests.o"
+KOBJ_RELOC="$BUILD/relocation.o"
 
 KOBJ_C="$BUILD/kernel.o"
 KOBJ_KBD="$BUILD/keyboard.o"
@@ -98,6 +100,9 @@ gcc $CFLAGS_COMMON -c "$KERNEL_INITRD_C" -o "$KOBJ_INITRD"
 echo "Compiling tests..."
 gcc $CFLAGS_COMMON -c "$KERNEL_TESTS_C" -o "$KOBJ_TESTS"
 
+echo "Compiling relocation helper..."
+gcc $CFLAGS_COMMON -c "$KERNEL_RELOC_C" -o "$KOBJ_RELOC"
+
 echo "Compiling ATA driver..."
 gcc $CFLAGS_COMMON -c "$KERNEL_ATA_C" -o "$KOBJ_ATA"
 
@@ -121,7 +126,7 @@ clang --target=x86_64-pc-windows-gnu $UEFI_CFLAGS -c "$KERNEL_ENTRY_C" -o "$KOBJ
 
 echo "Linking kernel ELF ($LINKER_SCRIPT)..."
 ld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
 
 echo "Linking UEFI loader EFI application..."
 lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"
