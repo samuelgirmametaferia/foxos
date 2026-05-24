@@ -14,21 +14,21 @@ void run_alloc_stress(void) {
     movehandle_t b = move_alloc(16 * 1024 * 1024ULL); /* 16MB */
     if (b) serial_writeln("[tests] uc_alloc 16MB ok"); else serial_writeln("[tests] uc_alloc 16MB failed");
 
-    /* allocate many small kmallocs */
-    void* ptrs[128];
+    /* allocate many small move-backed allocations */
+    movehandle_t ptrs[128];
     for (int i = 0; i < 128; ++i) {
-        ptrs[i] = kmalloc(1024 + (i & 15));
-        if (!ptrs[i]) { serial_writeln("[tests] kmalloc failed"); break; }
+        ptrs[i] = move_kmalloc(1024 + (i & 15));
+        if (!ptrs[i]) { serial_writeln("[tests] move_kmalloc failed"); break; }
     }
-    serial_writeln("[tests] kmalloc batch allocated");
+    serial_writeln("[tests] move_kmalloc batch allocated");
 
-    /* free uc_allocs */
+    /* free move-backed allocations and uc handles */
     if (a) move_free(a);
     if (b) move_free(b);
-    serial_writeln("[tests] uc_alloc freed");
+    serial_writeln("[tests] move allocs freed");
 
-    for (int i = 0; i < 128; ++i) if (ptrs[i]) kfree(ptrs[i]);
-    serial_writeln("[tests] kmalloc batch freed");
+    for (int i = 0; i < 128; ++i) if (ptrs[i]) move_kfree(ptrs[i]);
+    serial_writeln("[tests] move_kmalloc batch freed");
 
     /* check pmm counts */
     char buf[64];
@@ -69,12 +69,9 @@ void run_boot_self_tests(void) {
             if (!hs[i]) { serial_writeln("[tests] uc_alloc small failed"); hs[i] = 0; }
             else {
                 /* write an id pattern into first 16 bytes */
-                void* tmp = kmalloc(64);
-                if (tmp) {
-                    for (int j = 0; j < 64; ++j) ((uint8_t*)tmp)[j] = (uint8_t)(i & 0xFF);
-                    move_write(hs[i], tmp, 64);
-                    kfree(tmp);
-                }
+                uint8_t tmp[64];
+                for (int j = 0; j < 64; ++j) tmp[j] = (uint8_t)(i & 0xFF);
+                move_write(hs[i], tmp, 64);
             }
         }
 

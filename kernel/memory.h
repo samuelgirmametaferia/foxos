@@ -50,3 +50,7 @@ int move_free(movehandle_t h);
 int move_write(movehandle_t h, const void* src, uint64_t len);
 int move_read(movehandle_t h, uint64_t offset, void* dst, uint64_t len);
 int move_defrag_all(void);
+
+/* Moveable-backed kernel allocation helpers (new) */
+movehandle_t move_kmalloc(uint32_t size);
+int move_kfree(movehandle_t h);
