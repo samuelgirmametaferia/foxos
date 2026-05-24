@@ -159,6 +159,21 @@ void kernel_main(const boot_info_t* boot) {
     timer_init(100);
     serial_writeln("[foxos] timer online");
 
+    /* Draw a visible framebuffer test pattern before initializing console (helps debug GUI black screen) */
+    if (boot && boot->magic == FOX_BOOT_INFO_MAGIC && boot->framebuffer.framebuffer_base && boot->framebuffer.framebuffer_size) {
+        volatile uint32_t* fb = (volatile uint32_t*)(uintptr_t)boot->framebuffer.framebuffer_base;
+        uint32_t stride = boot->framebuffer.pixels_per_scanline ? boot->framebuffer.pixels_per_scanline : boot->framebuffer.width;
+        uint32_t w = boot->framebuffer.width ? boot->framebuffer.width : 320;
+        uint32_t h = boot->framebuffer.height ? boot->framebuffer.height : 200;
+        /* draw a simple checker of white and black  */
+        for (uint32_t y = 0; y < (h < 100 ? h : 100); ++y) {
+            for (uint32_t x = 0; x < (w < 200 ? w : 200); ++x) {
+                uint32_t color = ((x / 8 + y / 8) & 1) ? 0x00FFFFFFu : 0x00000000u;
+                fb[y * stride + x] = color;
+            }
+        }
+    }
+
     console_init(boot);
     console_writeln("foxos console ready");
     serial_writeln("[foxos] console ready");
