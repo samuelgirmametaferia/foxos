@@ -8,10 +8,10 @@ void run_alloc_stress(void) {
     serial_writeln("[tests] alloc stress start");
 
     /* test uc_alloc for several sizes */
-    uchandle_t a = uc_alloc(1024 * 1024 * 4ULL); /* 4MB */
+    movehandle_t a = move_alloc(1024 * 1024 * 4ULL); /* 4MB */
     if (a) serial_writeln("[tests] uc_alloc 4MB ok"); else serial_writeln("[tests] uc_alloc 4MB failed");
 
-    uchandle_t b = uc_alloc(16 * 1024 * 1024ULL); /* 16MB */
+    movehandle_t b = move_alloc(16 * 1024 * 1024ULL); /* 16MB */
     if (b) serial_writeln("[tests] uc_alloc 16MB ok"); else serial_writeln("[tests] uc_alloc 16MB failed");
 
     /* allocate many small kmallocs */
@@ -23,8 +23,8 @@ void run_alloc_stress(void) {
     serial_writeln("[tests] kmalloc batch allocated");
 
     /* free uc_allocs */
-    if (a) uc_free(a);
-    if (b) uc_free(b);
+    if (a) move_free(a);
+    if (b) move_free(b);
     serial_writeln("[tests] uc_alloc freed");
 
     for (int i = 0; i < 128; ++i) if (ptrs[i]) kfree(ptrs[i]);
@@ -63,16 +63,16 @@ void run_boot_self_tests(void) {
     {
         serial_writeln("[tests] defrag tests start");
         const int N = 16;
-        uchandle_t hs[N];
+        movehandle_t hs[N];
         for (int i = 0; i < N; ++i) {
-            hs[i] = uc_alloc(PAGE_SIZE);
+            hs[i] = move_alloc(PAGE_SIZE);
             if (!hs[i]) { serial_writeln("[tests] uc_alloc small failed"); hs[i] = 0; }
             else {
                 /* write an id pattern into first 16 bytes */
                 void* tmp = kmalloc(64);
                 if (tmp) {
                     for (int j = 0; j < 64; ++j) ((uint8_t*)tmp)[j] = (uint8_t)(i & 0xFF);
-                    uc_write(hs[i], tmp, 64);
+                    move_write(hs[i], tmp, 64);
                     kfree(tmp);
                 }
             }
@@ -80,18 +80,18 @@ void run_boot_self_tests(void) {
 
         /* free every other handle to create fragmentation */
         for (int i = 0; i < N; i += 2) {
-            if (hs[i]) { uc_free(hs[i]); hs[i] = 0; }
+            if (hs[i]) { move_free(hs[i]); hs[i] = 0; }
         }
 
         /* attempt defragmentation */
-        int moved = uc_defrag_all();
+        int moved = move_defrag_all();
         char mb[32]; int mbl=0; if (moved==0) { mb[mbl++]='0'; mb[mbl]=0; } else { int v=moved, t=0; char tmp[32]; while(v){ tmp[t++]=(char)('0'+(v%10)); v/=10; } while(t--) mb[mbl++]=tmp[t]; mb[mbl]=0; }
         serial_write("[tests] uc_defrag_all moved: "); serial_writeln(mb);
 
         /* verify content of remaining handles */
         for (int i = 1; i < N; i += 2) {
             if (!hs[i]) continue;
-            uint8_t buf[64]; if (uc_read(hs[i], 0, buf, 64) == 0) {
+            uint8_t buf[64]; if (move_read(hs[i], 0, buf, 64) == 0) {
                 int ok = 1; for (int k = 0; k < 64; ++k) if (buf[k] != (uint8_t)(i & 0xFF)) { ok = 0; break; }
                 if (ok) serial_writeln("[tests] defrag data ok"); else serial_writeln("[tests] defrag data MISMATCH");
             } else {
@@ -100,7 +100,7 @@ void run_boot_self_tests(void) {
         }
 
         /* cleanup */
-        for (int i = 1; i < N; i += 2) if (hs[i]) uc_free(hs[i]);
+        for (int i = 1; i < N; i += 2) if (hs[i]) move_free(hs[i]);
         serial_writeln("[tests] defrag tests done");
     }
 }

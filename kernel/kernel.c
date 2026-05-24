@@ -295,6 +295,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  selftest             - run boot self-tests only");
                 console_writeln("  allocstress          - run allocation stress test only");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
+                console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag)");
                 console_writeln("  pmm                  - show PMM stats and UC handles");
             console_writeln("  heapshrink           - release trailing free heap blocks to PMM");
             } else if (streq(line, "arch")) {
@@ -361,8 +362,16 @@ void kernel_main(const boot_info_t* boot) {
                 run_alloc_stress(); console_writeln("allocstress done");
             } else if (streq(line, "defrag")) {
                 serial_writeln("[cmd] defrag");
-                int moved = uc_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
+                int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
                 console_write("defrag moved: "); console_writeln(mb);
+            } else if (streq(line, "relocate")) {
+                serial_writeln("[cmd] relocate");
+                console_writeln("relocate: shrinking heaps and running UC defrag");
+                pmm_dump_stats();
+                heap_shrink_all();
+                int moved = move_defrag_all(); char rb[32]; u64_to_dec((uint64_t)moved, rb);
+                console_write("relocate moved: "); console_writeln(rb);
+                pmm_dump_stats();
             } else if (streq(line, "pmm")) {
                 serial_writeln("[cmd] pmm");
                 pmm_dump_stats();
