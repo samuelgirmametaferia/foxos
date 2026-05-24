@@ -528,31 +528,34 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
 
     /* For multiple pages, use a bounded scan with a skip equal to the failing offset to speed up progress. */
     uint64_t limit = (pmm_total >= pages) ? (pmm_total - pages + 1) : 0;
-    uint64_t i = last_idx % (pmm_total ? pmm_total : 1);
-    if (i >= limit) i = 0;
+    if (limit == 0) {
+        serial_writeln("[trace] pmm_alloc_contiguous_pages no space (limit=0)");
+        return 0;
+    }
+
+    uint64_t pos = last_idx % limit;
     uint64_t scanned = 0;
-    while (i < limit && scanned < pmm_total) {
+    while (scanned < limit) {
         uint64_t skip = 1;
         bool ok = true;
         uint64_t bad_j = 0;
         for (uint64_t j = 0; j < pages; ++j) {
-            if (frame_is_used(i + j)) { ok = false; bad_j = j; skip = j + 1; break; }
+            if (frame_is_used(pos + j)) { ok = false; bad_j = j; skip = j + 1; break; }
         }
         if (ok) {
-            for (uint64_t j = 0; j < pages; ++j) frame_mark_used(i + j);
-            paddr_t addr = addr_for_frame_index(i);
-            last_idx = i + pages;
-            serial_write("[trace] pmm_alloc_contiguous_pages allocated start="); serial_u64(i);
+            for (uint64_t j = 0; j < pages; ++j) frame_mark_used(pos + j);
+            paddr_t addr = addr_for_frame_index(pos);
+            last_idx = pos + pages;
+            serial_write("[trace] pmm_alloc_contiguous_pages allocated start="); serial_u64(pos);
             serial_write(" addr="); serial_u64((uint64_t)addr); serial_writeln("");
             return addr;
         }
 
-        /* print occasional progress */
-        if ((scanned & 0x3FFu) == 0) {
-            serial_write("[trace] pmm scan at idx="); serial_u64(i); serial_write(" bad_j="); serial_u64(bad_j); serial_writeln("");
+        if ((scanned & 0xFFu) == 0) {
+            serial_write("[trace] pmm scan at pos="); serial_u64(pos); serial_write(" bad_j="); serial_u64(bad_j); serial_writeln("");
         }
 
-        i += skip;
+        pos = (pos + skip) % limit;
         scanned += skip;
     }
 
