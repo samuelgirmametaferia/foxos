@@ -1,5 +1,6 @@
 #include "quiesce.h"
 #include "serial.h"
+#include <stddef.h>
 
 #define MAX_QUIESCE 32
 
