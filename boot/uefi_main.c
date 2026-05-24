@@ -280,6 +280,16 @@ static void serial_writeln(const char* text) {
     serial_putc('\n');
 }
 
+static void serial_print_hex64(uint64_t v) {
+    const char* hex = "0123456789ABCDEF";
+    serial_writeln("[uefi] HEX:");
+    for (int i = 15; i >= 0; --i) {
+        uint8_t nib = (v >> (i*4)) & 0xF;
+        serial_putc(hex[nib]);
+    }
+    serial_putc('\n');
+}
+
 static void* mem_copy(void* dst, const void* src, UINTN size) {
     uint8_t* d = (uint8_t*)dst;
     const uint8_t* s = (const uint8_t*)src;
@@ -442,7 +452,7 @@ static EFI_STATUS get_graphics(boot_framebuffer_t* framebuffer) {
     EFI_GRAPHICS_OUTPUT_PROTOCOL* gop = NULL;
     EFI_STATUS status = g_bs->LocateProtocol(&GOP_GUID, NULL, (void**)&gop);
     if (status != EFI_SUCCESS || !gop) {
-        /* Try to locate GOP via handle buffer as a fallback */
+        serial_writeln("[uefi] GOP LocateProtocol failed or GOP NULL");
         framebuffer->framebuffer_base = 0;
         framebuffer->framebuffer_size = 0;
         framebuffer->width = 0;
@@ -454,19 +464,31 @@ static EFI_STATUS get_graphics(boot_framebuffer_t* framebuffer) {
         framebuffer->blue_mask = 0;
         framebuffer->reserved = 0;
         return EFI_SUCCESS;
+    } else {
+        serial_writeln("[uefi] GOP LocateProtocol success");
+        serial_print_hex64((uint64_t)(uintptr_t)gop);
     }
 
     /* If Mode or Info or FrameBufferBase are missing, try iterating modes and setting a usable one */
     if (!gop->Mode || !gop->Mode->Info || gop->Mode->FrameBufferBase == 0) {
+        serial_writeln("[uefi] GOP Mode/Info/FrameBuffer missing, iterating modes");
         uint32_t max = gop->Mode ? gop->Mode->MaxMode : 0;
+        serial_writeln("[uefi] GOP MaxMode:");
+        serial_print_hex64(max);
         for (uint32_t m = 0; m < max; ++m) {
             EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* info = NULL;
             UINTN info_size = 0;
             if (gop->QueryMode && gop->QueryMode(gop, m, &info_size, &info) == EFI_SUCCESS && info) {
+                serial_writeln("[uefi] GOP QueryMode ok");
                 /* Try to set this mode so FrameBufferBase becomes valid */
                 if (gop->SetMode && gop->SetMode(gop, m) == EFI_SUCCESS) {
                     serial_writeln("[uefi] GOP SetMode success");
+                    /* print framebuffer base after set */
+                    serial_writeln("[uefi] GOP FB after SetMode:");
+                    serial_print_hex64((uint64_t)gop->Mode->FrameBufferBase);
                     break;
+                } else {
+                    serial_writeln("[uefi] GOP SetMode failed for mode");
                 }
             }
         }
