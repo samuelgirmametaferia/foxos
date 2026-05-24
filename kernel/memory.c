@@ -2,7 +2,7 @@
 #include <stddef.h>
 #include "memory.h"
 #include "boot.h"
-#include "drivers/serial.h"
+#include "serial.h"
 
 #define ALIGN_UP(value, align) (((value) + ((align) - 1u)) & ~((align) - 1u))
 #define MIN_HEAP_SPLIT 8u
@@ -301,11 +301,19 @@ void mem_init(const boot_info_t* boot) {
     /* determine highest physical address from memory map */
     uint64_t phys_end = initial;
     if (boot && boot->magic == FOX_BOOT_INFO_MAGIC && boot->memory_map && boot->memory_map_count) {
+        uint64_t total_conv_pages = 0;
+        serial_writeln("[mem] dumping memory map:");
         for (uint64_t i = 0; i < boot->memory_map_count; ++i) {
             const boot_memory_region_t* region = &boot->memory_map[i];
             uint64_t end = region->physical_start + (region->page_count * PAGE_SIZE);
             if (end > phys_end) phys_end = end;
+            serial_write("[mem] region "); serial_u64(i); serial_write(": type="); serial_u64(region->type);
+            serial_write(" start="); serial_u64(region->physical_start);
+            serial_write(" pages="); serial_u64(region->page_count);
+            serial_writeln("");
+            if (region->type == BOOT_MEMORY_TYPE_CONVENTIONAL) total_conv_pages += region->page_count;
         }
+        serial_write("[mem] total conventional pages: "); serial_u64(total_conv_pages); serial_writeln("");
     } else {
         /* fallback: limit to initial + 1GB */
         phys_end = initial + (1ull * 1024ull * 1024ull * 1024ull);
