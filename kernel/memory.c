@@ -737,6 +737,13 @@ int uc_defrag_all(void) {
     return moved;
 }
 
+/* Moveable allocation API wrappers */
+movehandle_t move_alloc(uint64_t bytes) { return uc_alloc(bytes); }
+int move_free(movehandle_t h) { return uc_free((uchandle_t)h); }
+int move_write(movehandle_t h, const void* src, uint64_t len) { return uc_write((uchandle_t)h, src, len); }
+int move_read(movehandle_t h, uint64_t offset, void* dst, uint64_t len) { return uc_read((uchandle_t)h, offset, dst, len); }
+int move_defrag_all(void) { return uc_defrag_all(); }
+
 uint64_t uc_size(uchandle_t h) {
     ucdesc_t* d = get_uc(h);
     return d ? (uint64_t)d->total_chunks * PAGE_SIZE : 0;

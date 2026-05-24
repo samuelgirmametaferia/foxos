@@ -42,3 +42,11 @@ void pmm_dump_stats(void);
 
 /* Heap maintenance */
 void heap_shrink_all(void);
+
+/* Moveable allocation API (thin wrapper over UC) for relocatable kernel allocations */
+typedef uint32_t movehandle_t;
+movehandle_t move_alloc(uint64_t bytes);
+int move_free(movehandle_t h);
+int move_write(movehandle_t h, const void* src, uint64_t len);
+int move_read(movehandle_t h, uint64_t offset, void* dst, uint64_t len);
+int move_defrag_all(void);
