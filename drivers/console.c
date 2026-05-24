@@ -10,7 +10,7 @@
 #define FB_CELL_H 8
 
 static int cx = 0, cy = 0;
-static uint8_t color = 0x1F;
+static uint8_t color = 0x0F; /* bg=0 (black), fg=15 (white) */
 
 static int fb_active = 0;
 static volatile uint32_t* fb_pixels = 0;

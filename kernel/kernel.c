@@ -176,6 +176,18 @@ void kernel_main(const boot_info_t* boot) {
         serial_write("[auto] pointer bits: "); serial_writeln(pb);
         serial_write("[auto] pointer bytes: "); serial_writeln("8");
         serial_write("[auto] ram pages: "); serial_writeln(capb);
+
+        if (boot) {
+            char fbbuf[64];
+            /* print framebuffer info */
+            serial_writeln("[auto] framebuffer:");
+            u64_to_dec(boot->framebuffer.framebuffer_base, fbbuf); serial_write("[auto] base: "); serial_writeln(fbbuf);
+            u64_to_dec(boot->framebuffer.framebuffer_size, fbbuf); serial_write("[auto] size: "); serial_writeln(fbbuf);
+            u32_to_dec(boot->framebuffer.width, fbbuf); serial_write("[auto] width: "); serial_writeln(fbbuf);
+            u32_to_dec(boot->framebuffer.height, fbbuf); serial_write("[auto] height: "); serial_writeln(fbbuf);
+            u32_to_dec(boot->framebuffer.pixels_per_scanline, fbbuf); serial_write("[auto] stride: "); serial_writeln(fbbuf);
+            u32_to_dec(boot->framebuffer.pixel_format, fbbuf); serial_write("[auto] pixel_format: "); serial_writeln(fbbuf);
+        }
     }
 
     vfs_init();
