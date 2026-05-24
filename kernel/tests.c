@@ -32,8 +32,15 @@ void run_alloc_stress(void) {
 
     /* check pmm counts */
     char buf[64];
-    u64_to_dec(pmm_total_pages(), buf); serial_write("[tests] total pages: "); serial_writeln(buf);
-    u64_to_dec(pmm_free_pages(), buf); serial_write("[tests] free pages: "); serial_writeln(buf);
+    /* local u64->dec */
+    {
+        uint64_t v = pmm_total_pages(); int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        serial_write("[tests] total pages: "); serial_writeln(buf);
+    }
+    {
+        uint64_t v = pmm_free_pages(); int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        serial_write("[tests] free pages: "); serial_writeln(buf);
+    }
 
     serial_writeln("[tests] alloc stress done");
 }
