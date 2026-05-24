@@ -370,7 +370,9 @@ void mem_init(const boot_info_t* boot) {
     if (boot && boot->magic == FOX_BOOT_INFO_MAGIC && boot->memory_map && boot->memory_map_count) {
         for (uint64_t i = 0; i < boot->memory_map_count; ++i) {
             const boot_memory_region_t* region = &boot->memory_map[i];
-            if (region->type == BOOT_MEMORY_TYPE_CONVENTIONAL && region->page_count > 0) {
+            /* Treat ACPI reclaimable memory as available to the OS after boot services exit.
+               Reserve ACPI NVS (non-volatile storage) as it may be required by firmware/ACPI drivers. */
+            if ((region->type == BOOT_MEMORY_TYPE_CONVENTIONAL || region->type == BOOT_MEMORY_TYPE_ACPI_RECLAIMABLE) && region->page_count > 0) {
                 uint64_t bytes = region->page_count * PAGE_SIZE;
                 pmm_release_range((paddr_t)region->physical_start, bytes);
             }
