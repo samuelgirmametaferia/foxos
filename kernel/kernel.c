@@ -292,7 +292,10 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  mkdir <dir>          - create directory");
                 console_writeln("  rm <path>            - remove file");
                 console_writeln("  stat <path>          - show file/dir info");
-            console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
+                console_writeln("  runtests             - run boot self-tests + alloc stress");
+                console_writeln("  selftest             - run boot self-tests only");
+                console_writeln("  allocstress          - run allocation stress test only");
+                console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
             } else if (streq(line, "arch")) {
                 char pb[8], capb[16];
                 u32_to_dec((uint32_t)(sizeof(void*) * 8u), pb);
