@@ -224,36 +224,17 @@ kernel_entry:
     mov al, 'A'
     out dx, al
 
-    ; set CR4.PAE
-    mov rax, cr4
-    or rax, (1<<5)
-    mov cr4, rax
-
-    ; serial marker 'B' after CR4
+    ; set CR4.PAE (skipped for now)
     mov dx, 0x3F8
     mov al, 'B'
     out dx, al
 
-    ; load PML4 physical address into CR3 (mask to allowed PHY addr bits)
-    lea rax, [pml4]
-    ; Mask to 52-bit physical address and clear low 12 bits
-    mov rdx, 0x000FFFFFFFFFF000
-    and rax, rdx
-    mov cr3, rax
+    ; NOTE: Early paging enable caused crashes under some configurations (16G). Skip enabling
+    ; paging here and let C initialize paging after reserving memory map regions.
 
-    ; serial marker 'C' after CR3
+    ; serial marker 'X' to indicate paging skipped
     mov dx, 0x3F8
-    mov al, 'C'
-    out dx, al
-
-    ; enable paging (CR0.PG)
-    mov rax, cr0
-    or rax, 0x80000000
-    mov cr0, rax
-
-    ; serial marker 'D' after CR0
-    mov dx, 0x3F8
-    mov al, 'D'
+    mov al, 'X'
     out dx, al
 
     ; restore boot_info pointer and call C entry
