@@ -6,42 +6,51 @@ BUILD=build
 mkdir -p "$BUILD"
 
 # Files
-BOOTLOADER=bootloader.asm
-BOOT_BIN="$BUILD/bootloader.bin"
-IMG="$BUILD/os.img"
-
+BOOT_DIR=boot
+DRIVERS_DIR=drivers
+FS_DIR=fs
 KDIR=kernel
+COMMON_DIR=common
+
+UEFI_DIR=boot
+UEFI_BIN="$BUILD/BOOTX64.EFI"
+UEFI_OBJ="$BUILD/uefi_main.obj"
+ESP_IMG="$BUILD/esp.img"
+ISO_DIR="$BUILD/iso"
+ISO_PATH="$BUILD/uefi.iso"
+
 KERNEL_C="$KDIR/kernel.c"
-KERNEL_KBD_C="$KDIR/keyboard.c"
-KERNEL_CONS_C="$KDIR/console.c"
+KERNEL_KBD_C="$DRIVERS_DIR/keyboard.c"
+KERNEL_CONS_C="$DRIVERS_DIR/console.c"
 KERNEL_MEM_C="$KDIR/memory.c"
-KERNEL_VFS_C="$KDIR/vfs.c"
-KERNEL_RAMFS_C="$KDIR/ramfs.c"
-KERNEL_INITRD_C="$KDIR/initrd.c"
-KERNEL_ATA_C="$KDIR/ata.c"
-KERNEL_RENDER_C="$KDIR/render.c"
-KERNEL_WINDOW_C="$KDIR/window.c"
-KERNEL_FB_C="$KDIR/fb.c"
-KERNEL_GUI_C="$KDIR/gui.c"
-KERNEL_SERIAL_C="$KDIR/serial.c"
-KERNEL_ENTRY_ASM="$KDIR/kernel_entry.asm"
+KERNEL_TESTS_C="$KDIR/tests.c"
+KERNEL_VFS_C="$FS_DIR/vfs.c"
+KERNEL_RAMFS_C="$FS_DIR/ramfs.c"
+KERNEL_INITRD_C="$FS_DIR/initrd.c"
+KERNEL_ATA_C="$DRIVERS_DIR/ata.c"
+KERNEL_SERIAL_C="$DRIVERS_DIR/serial.c"
+KERNEL_ENTRY_C="$BOOT_DIR/uefi_main.c"
 LINKER_SCRIPT="$KDIR/kernel.ld"
+
+KOBJ_TESTS="$BUILD/tests.o"
+
 KOBJ_C="$BUILD/kernel.o"
 KOBJ_KBD="$BUILD/keyboard.o"
 KOBJ_CONS="$BUILD/console.o"
 KOBJ_MEM="$BUILD/memory.o"
+KOBJ_TESTS="$BUILD/tests.o"
 KOBJ_VFS="$BUILD/vfs.o"
 KOBJ_RAMFS="$BUILD/ramfs.o"
 KOBJ_INITRD="$BUILD/initrd.o"
 KOBJ_ATA="$BUILD/ata.o"
-KOBJ_RENDER="$BUILD/render.o"
-KOBJ_WINDOW="$BUILD/window.o"
-KOBJ_FB="$BUILD/fb.o"
-KOBJ_GUI="$BUILD/gui.o"
 KOBJ_SERIAL="$BUILD/serial.o"
-KOBJ_ENTRY="$BUILD/kernel_entry.o"
+KOBJ_IDT="$BUILD/idt.o"
+KOBJ_IDT_STUBS="$BUILD/idt_stubs.o"
+KOBJ_TIMER="$BUILD/timer.o"
+KOBJ_ENTRY="$UEFI_OBJ"
+KOBJ_KERNEL_ENTRY="$BUILD/kernel_entry.o"
+
 KELF="$BUILD/kernel.elf"
-KBIN="$BUILD/kernel.bin"
 
 # Target: superfloppy (default) or hdd
 TARGET=${BUILD_TARGET:-hdd}
@@ -63,7 +72,9 @@ else
   MAKE_HDD_IMAGE=1
 fi
 
-CFLAGS_COMMON="-m32 -ffreestanding -fno-pic -fno-builtin -fno-stack-protector -nostdlib $CDEFS"
+INCLUDES="-I$KDIR -I$DRIVERS_DIR -I$FS_DIR -I$COMMON_DIR"
+CFLAGS_COMMON="-m64 -ffreestanding -fno-pic -fno-pie -fno-builtin -fno-stack-protector -mno-red-zone -nostdlib $CDEFS $INCLUDES"
+UEFI_CFLAGS="-m64 -ffreestanding -fno-pic -fno-pie -fno-builtin -fno-stack-protector -mno-red-zone -nostdlib $INCLUDES"
 
 # Assemble bootloader later, after we know kernel sectors
 
@@ -84,96 +95,105 @@ gcc $CFLAGS_COMMON -c "$KERNEL_VFS_C" -o "$KOBJ_VFS"
 gcc $CFLAGS_COMMON -c "$KERNEL_RAMFS_C" -o "$KOBJ_RAMFS"
 gcc $CFLAGS_COMMON -c "$KERNEL_INITRD_C" -o "$KOBJ_INITRD"
 
+echo "Compiling tests..."
+gcc $CFLAGS_COMMON -c "$KERNEL_TESTS_C" -o "$KOBJ_TESTS"
+
 echo "Compiling ATA driver..."
 gcc $CFLAGS_COMMON -c "$KERNEL_ATA_C" -o "$KOBJ_ATA"
-
-echo "Compiling renderer..."
-gcc $CFLAGS_COMMON -c "$KERNEL_RENDER_C" -o "$KOBJ_RENDER"
-
-echo "Compiling window..."
-gcc $CFLAGS_COMMON -c "$KERNEL_WINDOW_C" -o "$KOBJ_WINDOW"
-
-echo "Compiling framebuffer..."
-gcc $CFLAGS_COMMON -c "$KERNEL_FB_C" -o "$KOBJ_FB"
-
-echo "Compiling gui..."
-gcc $CFLAGS_COMMON -c "$KERNEL_GUI_C" -o "$KOBJ_GUI"
 
 echo "Compiling serial..."
 gcc $CFLAGS_COMMON -c "$KERNEL_SERIAL_C" -o "$KOBJ_SERIAL"
 
+echo "Compiling IDT..."
+gcc $CFLAGS_COMMON -c "$KDIR/idt.c" -o "$KOBJ_IDT"
+
+echo "Assembling IDT stubs..."
+nasm -f elf64 "$KDIR/idt_stubs.asm" -o "$KOBJ_IDT_STUBS"
+
 echo "Assembling kernel entry..."
-nasm -f elf32 "$KERNEL_ENTRY_ASM" -o "$KOBJ_ENTRY"
+nasm -f elf64 "$KDIR/kernel_entry.asm" -o "$KOBJ_KERNEL_ENTRY"
 
-echo "Linking kernel (ELF via $LINKER_SCRIPT)..."
-ld -m elf_i386 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_RENDER" "$KOBJ_WINDOW" "$KOBJ_FB" "$KOBJ_GUI" "$KOBJ_SERIAL"
+echo "Compiling timer..."
+gcc $CFLAGS_COMMON -c "$KDIR/timer.c" -o "$KOBJ_TIMER"
 
-echo "Converting kernel to flat binary..."
-objcopy -O binary "$KELF" "$KBIN"
+echo "Compiling UEFI entry..."
+clang --target=x86_64-pc-windows-gnu $UEFI_CFLAGS -c "$KERNEL_ENTRY_C" -o "$KOBJ_ENTRY"
 
-# Calculate sectors for loader (ceil(size/512))
-KBIN_SIZE=$(stat -c%s "$KBIN")
-SECTORS=$(( (KBIN_SIZE + 511) / 512 ))
-echo "Kernel size: $KBIN_SIZE bytes -> $SECTORS sectors"
+echo "Linking kernel ELF ($LINKER_SCRIPT)..."
+ld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
 
-# Pad kernel to full sectors so image data matches sectors read
-PAD=$(( SECTORS * 512 - KBIN_SIZE ))
-if (( PAD > 0 )); then
-  echo "Padding kernel by $PAD bytes to align to $SECTORS*512"
-  dd if=/dev/zero bs=1 count=$PAD status=none >> "$KBIN"
-fi
+echo "Linking UEFI loader EFI application..."
+lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"
 
-# Recompute size sanity
-KBIN_SIZE2=$(stat -c%s "$KBIN")
-if (( KBIN_SIZE2 != SECTORS * 512 )); then
-  echo "Error: padded kernel size ($KBIN_SIZE2) != SECTORS*512 ($((SECTORS*512)))" >&2
-  exit 1
-fi
-
-# Assemble bootloader with KERNEL_SECTORS macro
-echo "Assembling bootloader with KERNEL_SECTORS=$SECTORS..."
-nasm -f bin -DKERNEL_SECTORS=$SECTORS "$BOOTLOADER" -o "$BOOT_BIN"
-
-# Verify bootloader size is exactly 512 and signature 0x55AA
-BOOT_SIZE=$(stat -c%s "$BOOT_BIN")
-if (( BOOT_SIZE != 512 )); then
-  echo "Error: bootloader size is $BOOT_SIZE, expected 512" >&2
-  exit 1
-fi
-SIG=$(hexdump -v -e '1/1 "%02x"' -s 510 -n 2 "$BOOT_BIN")
-if [[ "$SIG" != "55aa" && "$SIG" != "55AA" ]]; then
-  echo "Error: bootloader missing 0x55AA signature (got $SIG)" >&2
-  exit 1
-fi
-
-# Always create a floppy boot image for reliable boot
-echo "Creating floppy image..."
-IMG="$BUILD/os.img"
-dd if=/dev/zero of="$IMG" bs=512 count=2880 status=none
-echo "Writing boot sector..."
-dd if="$BOOT_BIN" of="$IMG" conv=notrunc status=none
-echo "Writing kernel at LBA 1..$SECTORS..."
-dd if="$KBIN" of="$IMG" bs=512 seek=1 conv=notrunc status=none
-
-echo "Done. Floppy Image: $IMG"
-
-# Optionally also create an HDD image for disk management tests
-if (( MAKE_HDD_IMAGE )); then
-  DISK_SIZE_MB=${DISK_SIZE_MB:-32}
-  SECTORS_TOTAL=$(( DISK_SIZE_MB * 1024 * 1024 / 512 ))
-  HDD_IMG="$BUILD/disk.img"
-  echo "Creating $DISK_SIZE_MB MiB HDD image ($SECTORS_TOTAL sectors) at $HDD_IMG..."
-  dd if=/dev/zero of="$HDD_IMG" bs=512 count=$SECTORS_TOTAL status=none
-  echo "Writing MBR with one partition..."
-  nasm -f bin -DPT_LBA_START=${PART_START:-2048} -DPT_LBA_COUNT=$(( SECTORS_TOTAL - ${PART_START:-2048} )) mbr_pt.asm -o "$BUILD/mbr.bin"
-  dd if="$BUILD/mbr.bin" of="$HDD_IMG" conv=notrunc status=none
-  echo "Writing VBR (bootloader) at LBA ${PART_START:-2048}..."
-  dd if="$BOOT_BIN" of="$HDD_IMG" bs=512 seek=${PART_START:-2048} conv=notrunc status=none
-  echo "Writing kernel right after VBR..."
-  dd if="$KBIN" of="$HDD_IMG" bs=512 seek=$(( ${PART_START:-2048} + 1 )) conv=notrunc status=none
-  echo "Done. HDD Image: $HDD_IMG"
-  echo "Run: qemu-system-i386 -m 64 -serial stdio -boot a -drive file=$IMG,if=floppy,format=raw -drive id=hdd,file=$HDD_IMG,if=none,format=raw -device ide-hd,drive=hdd,bus=ide.0"
+# Create simple EFI ISO with BOOTX64.EFI
+if command -v genisoimage >/dev/null 2>&1; then
+  echo "Packing EFI ISO..."
+  rm -rf "$ISO_DIR"
+  mkdir -p "$ISO_DIR/EFI/BOOT"
+  cp -f "$UEFI_BIN" "$ISO_DIR/EFI/BOOT/BOOTX64.EFI" || true
+  cp -f "$KELF" "$ISO_DIR/EFI/BOOT/KERNEL.ELF"
+  genisoimage -o "$ISO_PATH" -V FOXOS -J -r -eltorito-alt-boot -e EFI/BOOT/BOOTX64.EFI -no-emul-boot "$ISO_DIR" >/dev/null 2>&1 || true
+  echo "Created EFI ISO: $ISO_PATH"
+elif command -v xorriso >/dev/null 2>&1 && command -v parted >/dev/null 2>&1 && command -v mkfs.vfat >/dev/null 2>&1 && command -v mcopy >/dev/null 2>&1 && command -v mmd >/dev/null 2>&1; then
+  echo "Packing EFI disk image with GPT ESP..."
+  rm -rf "$ISO_DIR"
+  mkdir -p "$ISO_DIR"
+  rm -f "$ESP_IMG"
+  dd if=/dev/zero of="$ESP_IMG" bs=1M count=64 >/dev/null 2>&1
+  parted -s "$ESP_IMG" mklabel gpt
+  parted -s "$ESP_IMG" mkpart ESP fat32 1MiB 100%
+  parted -s "$ESP_IMG" set 1 esp on
+  mkfs.vfat -F 32 -n FOXOS --offset=2048 "$ESP_IMG"
+  mmd -i "$ESP_IMG@@1048576" ::/EFI
+  mmd -i "$ESP_IMG@@1048576" ::/EFI/BOOT
+  mcopy -i "$ESP_IMG@@1048576" "$UEFI_BIN" ::/EFI/BOOT/BOOTX64.EFI
+  mcopy -i "$ESP_IMG@@1048576" "$KELF" ::/EFI/BOOT/KERNEL.ELF
+  cp -f "$ESP_IMG" "$ISO_DIR/esp.img"
+  xorriso -as mkisofs -o "$ISO_PATH" -V FOXOS -J -R -eltorito-alt-boot -e esp.img -no-emul-boot "$ISO_DIR" >/dev/null 2>&1
+  echo "Created EFI ISO: $ISO_PATH"
 else
-  echo "Run: qemu-system-i386 -m 64 -serial stdio -boot a -drive file=$IMG,if=floppy,format=raw"
+  echo "Warning: no complete ISO toolchain found; EFI ISO not created. BOOTX64.EFI available at $UEFI_BIN"
 fi
+
+QEMU_CODE=""
+for candidate in /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd; do
+  if [[ -f "$candidate" ]]; then
+    QEMU_CODE="$candidate"
+    break
+  fi
+done
+
+QEMU_VARS=""
+for candidate in /usr/share/OVMF/OVMF_VARS.fd /usr/share/edk2/x64/OVMF_VARS.4m.fd; do
+  if [[ -f "$candidate" ]]; then
+    QEMU_VARS="$candidate"
+    break
+  fi
+done
+
+if [[ -n "$QEMU_CODE" ]]; then
+  if [[ -n "$QEMU_VARS" ]]; then
+    cp -f "$QEMU_VARS" "$BUILD/OVMF_VARS.fd"
+  fi
+  HUMAN_QEMU_CMD="qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE"
+  if [[ -n "$QEMU_VARS" ]]; then
+    echo "Run in QEMU:"
+    HUMAN_QEMU_CMD="$HUMAN_QEMU_CMD -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd"
+  else
+    echo "Run in QEMU:"
+  fi
+  HUMAN_QEMU_CMD="$HUMAN_QEMU_CMD -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+  echo "$HUMAN_QEMU_CMD"
+  echo "Headless verifier:"
+  if [[ -n "$QEMU_VARS" ]]; then
+    echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
+  else
+    echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
+  fi
+else
+  echo "Run in QEMU:"
+  echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+fi
+
+echo "Done. UEFI binary: $UEFI_BIN"
