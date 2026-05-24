@@ -36,3 +36,6 @@ uint64_t uc_used(uchandle_t h);
 /* Expose helpers for paging setup */
 void setup_identity_paging(void);
 uint64_t pmm_phys_end_bytes(void);
+
+/* Debug helpers */
+void pmm_dump_stats(void);

@@ -295,6 +295,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  selftest             - run boot self-tests only");
                 console_writeln("  allocstress          - run allocation stress test only");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
+                console_writeln("  pmm                  - show PMM stats and UC handles");
             } else if (streq(line, "arch")) {
                 char pb[8], capb[16];
                 u32_to_dec((uint32_t)(sizeof(void*) * 8u), pb);
@@ -361,6 +362,9 @@ void kernel_main(const boot_info_t* boot) {
                 serial_writeln("[cmd] defrag");
                 int moved = uc_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
                 console_write("defrag moved: "); console_writeln(mb);
+            } else if (streq(line, "pmm")) {
+                serial_writeln("[cmd] pmm");
+                pmm_dump_stats();
             } else if (streq(line, "reboot")) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {

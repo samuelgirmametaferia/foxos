@@ -524,6 +524,51 @@ uint64_t pmm_free_pages(void) {
     return pmm_free;
 }
 
+void pmm_dump_stats(void) {
+    serial_writeln("[pmm] stats start");
+    char buf[64];
+    /* total */
+    {
+        uint64_t v = pmm_total; int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        serial_write("[pmm] total pages: "); serial_writeln(buf);
+        console_write("pmm total pages: "); console_writeln(buf);
+    }
+    /* free */
+    {
+        uint64_t v = pmm_free; int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        serial_write("[pmm] free pages: "); serial_writeln(buf);
+        console_write("pmm free pages: "); console_writeln(buf);
+    }
+
+    /* UC handles summary */
+    int used = 0;
+    for (uint32_t i = 0; i < MAX_UC; ++i) {
+        if (uc_table[i].magic != 0) used++;
+    }
+    {
+        uint64_t v = used; int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        serial_write("[pmm] uc handles used: "); serial_writeln(buf);
+        console_write("uc handles used: "); console_writeln(buf);
+    }
+
+    /* list details (magic, chunks, contiguous?) */
+    for (uint32_t i = 0; i < MAX_UC; ++i) {
+        ucdesc_t* d = &uc_table[i];
+        if (d->magic == 0) continue;
+        /* compute contiguity */
+        int contiguous = 1;
+        for (uint32_t j = 1; j < d->total_chunks; ++j) {
+            if (d->chunk_idx[j] != d->chunk_idx[j-1] + 1u) { contiguous = 0; break; }
+        }
+        char linebuf[128]; int p = 0;
+        uint32_t mag = d->magic; /* print magic as number */
+        /* simple u32->dec */
+        char tmp[32]; int t=0; if (mag==0) { tmp[t++]='0'; } else { uint32_t mv=mag; while(mv){ tmp[t++]=(char)('0'+(mv%10)); mv/=10; } } int k=0; while(t--) linebuf[p++]=tmp[t]; linebuf[p]=0;
+        serial_write("[pmm] uc: idx="); serial_u32(i); serial_write(" magic="); serial_write(linebuf); serial_write(" chunks="); serial_u32(d->total_chunks); serial_write(" contiguous="); serial_write(contiguous?"1":"0"); serial_writeln("");
+    }
+    serial_writeln("[pmm] stats done");
+}
+
 void* kmalloc(uint32_t size) {
     if (size == 0) return NULL;
     return heap_alloc(size);
