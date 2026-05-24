@@ -11,6 +11,7 @@
 #include "serial.h"
 #include "idt.h"
 #include "timer.h"
+#include "tests.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -189,6 +190,10 @@ void kernel_main(const boot_info_t* boot) {
 
     /* Set up identity paging now that PMM is initialized and reserved regions are known */
     setup_identity_paging();
+
+    /* Run boot self-tests and allocation stress tests to validate PMM and paging */
+    run_boot_self_tests();
+    run_alloc_stress();
 
     /* Auto-print arch and PMM info for headless testing */
     {

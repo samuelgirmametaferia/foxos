@@ -42,6 +42,7 @@ static uint64_t pmm_total = 0;
 static uint64_t pmm_free = 0;
 static uintptr_t pmm_base = 0;                 /* physical address of first managed page */
 static uint64_t pmm_phys_end = 0;              /* highest physical address considered (bytes) */
+static uint64_t pmm_total_conv_pages = 0;        /* total conventional pages reported by firmware */
 
 static heap_block_t* heap_head = NULL;
 static ucdesc_t uc_table[MAX_UC];
@@ -318,6 +319,8 @@ void mem_init(const boot_info_t* boot) {
             if (region->type == BOOT_MEMORY_TYPE_CONVENTIONAL) total_conv_pages += region->page_count;
         }
         serial_write("[mem] total conventional pages: "); serial_u64(total_conv_pages); serial_writeln("");
+        /* record conventional pages for paging target */
+        pmm_total_conv_pages = total_conv_pages;
         serial_write("[mem] highest considered phys_end: "); serial_u64(phys_end); serial_writeln("");
     } else {
         /* fallback: limit to initial + 1GB */
@@ -397,18 +400,21 @@ uint64_t pmm_phys_end_bytes(void) { return pmm_phys_end; }
 
 void setup_identity_paging(void) {
     serial_writeln("[mem] setup_identity_paging start");
-    if (pmm_phys_end == 0) {
-        serial_writeln("[mem] phys_end unknown, skipping paging");
+    if (pmm_phys_end == 0 && pmm_total_conv_pages == 0) {
+        serial_writeln("[mem] phys_end/conventional pages unknown, skipping paging");
         return;
     }
 
-    uint64_t bytes = pmm_phys_end;
-    /* compute number of 1GiB PDs needed */
+    uint64_t bytes;
+    if (pmm_total_conv_pages > 0) bytes = pmm_total_conv_pages * PAGE_SIZE;
+    else bytes = pmm_phys_end;
+
+    /* compute number of PDs (each PD covers 1GiB via 512 * 2MiB entries) */
     uint64_t pd_count = (bytes + ((1ull<<30) - 1ull)) >> 30;
     if (pd_count == 0) pd_count = 1;
     if (pd_count > 512) pd_count = 512;
 
-    uint64_t pages_needed = 2 + pd_count; /* PML4 + PDPT + PDs */
+    uint64_t pages_needed = 2 + pd_count; /* PML4 + PDPT + pd_count PD pages */
     serial_write("[mem] paging: allocating pages for page-tables: "); serial_u64(pages_needed); serial_writeln("");
     paddr_t base = pmm_alloc_contiguous_pages(pages_needed);
     if (!base) { serial_writeln("[mem] paging: pmm_alloc_contiguous_pages failed"); return; }
@@ -424,6 +430,9 @@ void setup_identity_paging(void) {
     uint64_t* pml4 = (uint64_t*)(uintptr_t)pml4_phys;
     uint64_t* pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
     pml4[0] = pdpt_phys | 0x03u;
+
+    /* set recursive mapping in PML4[511] -> PML4 */
+    pml4[511] = pml4_phys | 0x03u;
 
     /* fill PDPT entries */
     for (uint64_t i = 0; i < pd_count; ++i) {
@@ -460,7 +469,6 @@ void setup_identity_paging(void) {
 
     serial_writeln("[mem] paging enabled");
 }
-
 paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {    if (pages == 0 || pages > pmm_free || pages > pmm_total) return 0;
 
     uint64_t run = 0;
