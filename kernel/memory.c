@@ -328,6 +328,11 @@ void mem_init(const boot_info_t* boot) {
     uint64_t tentative_words = (tentative_frames + 31u) / 32u;
     uint64_t bitmap_bytes = ALIGN_UP(tentative_words * sizeof(uint32_t), PAGE_SIZE);
     uintptr_t bitmap_addr = initial;
+    /* If the firmware provided a handoff block, place the bitmap after it to avoid overlap */
+    if (boot && boot->magic == FOX_BOOT_INFO_MAGIC && boot->handoff_base && boot->handoff_size) {
+        uintptr_t handoff_end = (uintptr_t)(boot->handoff_base + boot->handoff_size);
+        if (handoff_end > bitmap_addr) bitmap_addr = align_up_ptr(handoff_end, PAGE_SIZE);
+    }
     uintptr_t new_base = align_up_ptr(bitmap_addr + bitmap_bytes, PAGE_SIZE);
 
     /* now compute actual managed frames starting after bitmap */
