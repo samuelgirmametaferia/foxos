@@ -234,8 +234,11 @@ kernel_entry:
     mov al, 'B'
     out dx, al
 
-    ; load PML4 physical address into CR3
+    ; load PML4 physical address into CR3 (mask to allowed PHY addr bits)
     lea rax, [pml4]
+    ; Mask to 52-bit physical address and clear low 12 bits
+    mov rdx, 0x000FFFFFFFFFF000
+    and rax, rdx
     mov cr3, rax
 
     ; serial marker 'C' after CR3
