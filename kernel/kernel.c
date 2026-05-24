@@ -12,6 +12,7 @@
 #include "idt.h"
 #include "timer.h"
 #include "tests.h"
+#include "relocation.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -295,7 +296,8 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  selftest             - run boot self-tests only");
                 console_writeln("  allocstress          - run allocation stress test only");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
-                console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag)");
+                console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag). Usage: 'relocate' or 'relocate N' passes");
+                console_writeln("  relocate-status      - show last relocation status");
                 console_writeln("  pmm                  - show PMM stats and UC handles");
             console_writeln("  heapshrink           - release trailing free heap blocks to PMM");
             } else if (streq(line, "arch")) {
@@ -364,14 +366,26 @@ void kernel_main(const boot_info_t* boot) {
                 serial_writeln("[cmd] defrag");
                 int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
                 console_write("defrag moved: "); console_writeln(mb);
-            } else if (streq(line, "relocate")) {
+            } else if (streq(line, "relocate") || startswith(line, "relocate ")) {
                 serial_writeln("[cmd] relocate");
+                uint32_t passes = 3;
+                if (startswith(line, "relocate ")) {
+                    uint64_t v = 0; if (parse_u64_dec(line+9, &v) == 0 && v > 0) passes = (uint32_t)v;
+                }
                 console_writeln("relocate: shrinking heaps and running UC defrag");
                 pmm_dump_stats();
-                heap_shrink_all();
-                int moved = move_defrag_all(); char rb[32]; u64_to_dec((uint64_t)moved, rb);
+                int moved = relocation_compact_multi((int)passes);
+                char rb[32]; u64_to_dec((uint64_t)moved, rb);
                 console_write("relocate moved: "); console_writeln(rb);
                 pmm_dump_stats();
+            } else if (streq(line, "relocate-status")) {
+                serial_writeln("[cmd] relocate-status");
+                relocation_status_t s = relocation_get_status();
+                char mb[32]; u64_to_dec((uint64_t)s.last_moved, mb);
+                console_write("last moved: "); console_writeln(mb);
+                char pb[32]; u64_to_dec((uint64_t)s.last_passes, pb);
+                console_write("last passes: "); console_writeln(pb);
+                console_write("running: "); console_writeln(s.running?"1":"0");
             } else if (streq(line, "pmm")) {
                 serial_writeln("[cmd] pmm");
                 pmm_dump_stats();
