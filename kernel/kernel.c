@@ -147,6 +147,12 @@ void kernel_main(const boot_info_t* boot) {
     serial_init();
     serial_writeln("[foxos] serial online");
 
+    /* print boot pointer value for debugging handoff */
+    if (boot) {
+        char bp[32]; u64_to_dec((uint64_t)(uintptr_t)boot, bp);
+        serial_write("[foxos] boot ptr: "); serial_writeln(bp);
+    }
+
     if (boot && boot->magic == FOX_BOOT_INFO_MAGIC) {
         serial_writeln("[foxos] uefi handoff received");
     } else {
