@@ -186,11 +186,13 @@ void kernel_main(const boot_info_t* boot) {
         char pb[8]; char capb[32];
         u32_to_dec((uint32_t)(sizeof(void*) * 8u), pb);
         u64_to_dec(pmm_total_pages(), capb);
+        char freeb[32]; u64_to_dec(pmm_free_pages(), freeb);
         serial_writeln("[auto] arch info:");
         serial_writeln("[auto] x86_64 native");
         serial_write("[auto] pointer bits: "); serial_writeln(pb);
         serial_write("[auto] pointer bytes: "); serial_writeln("8");
-        serial_write("[auto] ram pages: "); serial_writeln(capb);
+        serial_write("[auto] ram pages total: "); serial_writeln(capb);
+        serial_write("[auto] ram pages free: "); serial_writeln(freeb);
 
         if (boot) {
             char fbbuf[64];

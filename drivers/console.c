@@ -21,11 +21,11 @@ static int fb_cols = 0;
 static int fb_rows = 0;
 
 static const uint32_t vga_palette[16] = {
-    /* Use grayscale values (R=G=B) so colors are visible regardless of framebuffer channel ordering */
-    0x00FFFFFF, 0x00CCCCCC, 0x00AAAAAA, 0x00888888,
-    0x00666666, 0x00444444, 0x00222222, 0x00111111,
-    0x00000000, 0x00EEEEEE, 0x00DDDDDD, 0x00BBBBBB,
-    0x00999999, 0x00777777, 0x00555555, 0x00333333
+    /* Bright color set (ARGB 0x00RRGGBB), index 0 = black background */
+    0x00000000, 0x00FF0000, 0x0000FF00, 0x00FFFF00,
+    0x000000FF, 0x00FF00FF, 0x0000FFFF, 0x00FFFFFF,
+    0x00800000, 0x00008000, 0x00008080, 0x00800080,
+    0x00808000, 0x00404040, 0x00C0C0C0, 0x00666666
 };
 
 static const uint8_t font8x8_basic[96][8] = {
