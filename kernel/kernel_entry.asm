@@ -12,6 +12,44 @@ kernel_stack:
     resb 32768
 kernel_stack_top:
 
+; Page tables for identity mapping (PML4, PDPT, PD0..PD15)
+align 4096
+pml4:   resq 512
+align 4096
+pdpt:   resq 512
+align 4096
+pd0:    resq 512
+align 4096
+pd1:    resq 512
+align 4096
+pd2:    resq 512
+align 4096
+pd3:    resq 512
+align 4096
+pd4:    resq 512
+align 4096
+pd5:    resq 512
+align 4096
+pd6:    resq 512
+align 4096
+pd7:    resq 512
+align 4096
+pd8:    resq 512
+align 4096
+pd9:    resq 512
+align 4096
+pd10:   resq 512
+align 4096
+pd11:   resq 512
+align 4096
+pd12:   resq 512
+align 4096
+pd13:   resq 512
+align 4096
+pd14:   resq 512
+align 4096
+pd15:   resq 512
+
 section .text
 kernel_entry:
     ; save boot_info pointer
@@ -181,23 +219,49 @@ kernel_entry:
     jmp .fill_pd_tables
 .done_pd_fill:
 
+    ; serial marker 'A' before paging
+    mov dx, 0x3F8
+    mov al, 'A'
+    out dx, al
+
     ; set CR4.PAE
     mov rax, cr4
     or rax, (1<<5)
     mov cr4, rax
 
+    ; serial marker 'B' after CR4
+    mov dx, 0x3F8
+    mov al, 'B'
+    out dx, al
+
     ; load PML4 physical address into CR3
     lea rax, [pml4]
     mov cr3, rax
+
+    ; serial marker 'C' after CR3
+    mov dx, 0x3F8
+    mov al, 'C'
+    out dx, al
 
     ; enable paging (CR0.PG)
     mov rax, cr0
     or rax, 0x80000000
     mov cr0, rax
 
+    ; serial marker 'D' after CR0
+    mov dx, 0x3F8
+    mov al, 'D'
+    out dx, al
+
     ; restore boot_info pointer and call C entry
     mov rdi, rbx
     call kernel_main
+
+    ; serial marker 'E' after return (should not happen)
+    mov dx, 0x3F8
+    mov al, 'E'
+    out dx, al
+
 .hang:
     hlt
     jmp .hang
