@@ -191,9 +191,8 @@ void kernel_main(const boot_info_t* boot) {
     /* Set up identity paging now that PMM is initialized and reserved regions are known */
     setup_identity_paging();
 
-    /* Run boot self-tests and allocation stress tests to validate PMM and paging */
+    /* Run boot self-tests to validate PMM and paging (alloc stress is manual via shell) */
     run_boot_self_tests();
-    run_alloc_stress();
 
     /* Auto-print arch and PMM info for headless testing */
     {

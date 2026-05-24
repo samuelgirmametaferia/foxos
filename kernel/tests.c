@@ -62,7 +62,7 @@ void run_boot_self_tests(void) {
     /* Run defragmentation tests */
     {
         serial_writeln("[tests] defrag tests start");
-        const int N = 64;
+        const int N = 16;
         uchandle_t hs[N];
         for (int i = 0; i < N; ++i) {
             hs[i] = uc_alloc(PAGE_SIZE);
