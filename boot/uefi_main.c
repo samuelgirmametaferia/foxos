@@ -742,6 +742,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
     serial_writeln("[uefi] boot info ready");
 
+    serial_writeln("[uefi] boot_info ptr:");
+    serial_print_hex64((uint64_t)(uintptr_t)boot_info);
+
     serial_writeln("[uefi] exiting boot services");
     status = g_bs->ExitBootServices(ImageHandle, map_key);
     if (status != EFI_SUCCESS) {
