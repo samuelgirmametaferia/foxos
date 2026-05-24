@@ -191,7 +191,7 @@ if [[ -n "$QEMU_CODE" ]]; then
   if [[ -n "$QEMU_VARS" ]]; then
     cp -f "$QEMU_VARS" "$BUILD/OVMF_VARS.fd"
   fi
-  HUMAN_QEMU_CMD="qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE"
+  HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE"
   if [[ -n "$QEMU_VARS" ]]; then
     echo "Run in QEMU:"
     HUMAN_QEMU_CMD="$HUMAN_QEMU_CMD -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd"
@@ -202,7 +202,7 @@ if [[ -n "$QEMU_CODE" ]]; then
   echo "$HUMAN_QEMU_CMD"
   echo "Headless verifier:"
   if [[ -n "$QEMU_VARS" ]]; then
-    echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
+    echo "qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
   else
     echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
   fi
