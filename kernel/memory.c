@@ -41,6 +41,7 @@ static uint64_t pmm_bitmap_words = 0;
 static uint64_t pmm_total = 0;
 static uint64_t pmm_free = 0;
 static uintptr_t pmm_base = 0;                 /* physical address of first managed page */
+static uint64_t pmm_phys_end = 0;              /* highest physical address considered (bytes) */
 
 static heap_block_t* heap_head = NULL;
 static ucdesc_t uc_table[MAX_UC];
@@ -391,9 +392,6 @@ void mem_init(const boot_info_t* boot) {
     }
     heap_head = NULL;
 }
-
-/* global recorded physical end (bytes) for paging setup */
-static uint64_t pmm_phys_end = 0;
 
 uint64_t pmm_phys_end_bytes(void) { return pmm_phys_end; }
 
