@@ -461,9 +461,23 @@ static EFI_STATUS get_graphics(boot_framebuffer_t* framebuffer) {
     framebuffer->height = gop->Mode->Info->VerticalResolution;
     framebuffer->pixels_per_scanline = gop->Mode->Info->PixelsPerScanLine;
     framebuffer->pixel_format = gop->Mode->Info->PixelFormat;
-    framebuffer->red_mask = 0;
-    framebuffer->green_mask = 0;
-    framebuffer->blue_mask = 0;
+
+    /* Populate color masks for PixelBitMask format, or provide default masks for known formats */
+    if (gop->Mode->Info->PixelFormat == 2) {
+        framebuffer->red_mask = gop->Mode->Info->PixelInformation[0];
+        framebuffer->green_mask = gop->Mode->Info->PixelInformation[1];
+        framebuffer->blue_mask = gop->Mode->Info->PixelInformation[2];
+    } else if (gop->Mode->Info->PixelFormat == 1) {
+        /* PixelBlueGreenRedReserved8BitPerColor */
+        framebuffer->red_mask = 0x00FF0000;
+        framebuffer->green_mask = 0x0000FF00;
+        framebuffer->blue_mask = 0x000000FF;
+    } else {
+        /* PixelRedGreenBlueReserved8BitPerColor or unknown */
+        framebuffer->red_mask = 0x00FF0000;
+        framebuffer->green_mask = 0x0000FF00;
+        framebuffer->blue_mask = 0x000000FF;
+    }
     framebuffer->reserved = 0;
     return EFI_SUCCESS;
 }
