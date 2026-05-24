@@ -331,8 +331,17 @@ void mem_init(const boot_info_t* boot) {
     pmm_phys_end = phys_end;
 
     /* allocate bitmap area immediately after kernel BSS */
-    uint64_t tentative_frames = (phys_end > initial) ? ((phys_end - initial) / PAGE_SIZE) : 0;
-    uint64_t tentative_words = (tentative_frames + 31u) / 32u;
+    /* Prefer sizing the bitmap by the firmware-reported conventional pages when available.
+       This avoids reserving an enormous low-memory bitmap area when the memory map includes
+       very high sparse regions (which previously pushed pmm_base up and made few pages
+       available for allocation). */
+    uint64_t frames_to_manage = 0;
+    if (pmm_total_conv_pages > 0) {
+        frames_to_manage = pmm_total_conv_pages;
+    } else {
+        frames_to_manage = (phys_end > initial) ? ((phys_end - initial) / PAGE_SIZE) : 0;
+    }
+    uint64_t tentative_words = (frames_to_manage + 31u) / 32u;
     uint64_t bitmap_bytes = ALIGN_UP(tentative_words * sizeof(uint32_t), PAGE_SIZE);
     uintptr_t bitmap_addr = initial;
     /* If the firmware provided a handoff block, place the bitmap after it to avoid overlap */
@@ -598,6 +607,57 @@ int uc_free(uchandle_t h) {
     d->total_chunks = 0;
     d->used_bytes = 0;
     return 0;
+}
+
+/* Attempt to allocate a contiguous region for an existing UC handle and copy
+   its contents into the new contiguous backing. On success the UC descriptor is
+   updated to point to the new contiguous frames and old frames are freed.
+   Returns 0 on success, -1 on failure (no contiguous space or invalid handle). */
+int uc_defragment(uchandle_t h) {
+    ucdesc_t* d = get_uc(h);
+    if (!d) return -1;
+    uint32_t pages = d->total_chunks;
+    if (pages == 0) return -1;
+
+    paddr_t base = pmm_alloc_contiguous_pages(pages);
+    if (!base) return -1;
+
+    /* copy used bytes from old scattered frames into contiguous region */
+    uint64_t bytes = d->used_bytes;
+    uint64_t pos = 0;
+    while (pos < bytes) {
+        uint32_t cidx = (uint32_t)(pos / PAGE_SIZE);
+        uint32_t off = (uint32_t)(pos % PAGE_SIZE);
+        uint32_t space = PAGE_SIZE - off;
+        uint32_t n = (bytes - pos < (uint64_t)space) ? (uint32_t)(bytes - pos) : space;
+        uint8_t* src = (uint8_t*)frame_addr_from_chunk(d->chunk_idx[cidx]) + off;
+        uint8_t* dst = (uint8_t*)(uintptr_t)(base + ((uint64_t)cidx * PAGE_SIZE)) + off;
+        memcopy(dst, src, n);
+        pos += n;
+    }
+
+    /* free old frames */
+    for (uint32_t i = 0; i < pages; ++i) {
+        pmm_free_frame(frame_addr_from_chunk(d->chunk_idx[i]));
+    }
+
+    /* update descriptor to point to contiguous frames */
+    uint64_t start_idx = frame_index_for_addr(base);
+    for (uint32_t i = 0; i < pages; ++i) d->chunk_idx[i] = (uint32_t)(start_idx + i);
+
+    return 0;
+}
+
+/* Try to defragment all active UC handles. Returns number of handles successfully
+   moved to contiguous backing. */
+int uc_defrag_all(void) {
+    int moved = 0;
+    for (uint32_t i = 0; i < MAX_UC; ++i) {
+        if (uc_table[i].magic != 0) {
+            if (uc_defragment(uc_table[i].magic) == 0) moved++;
+        }
+    }
+    return moved;
 }
 
 uint64_t uc_size(uchandle_t h) {

@@ -292,6 +292,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  mkdir <dir>          - create directory");
                 console_writeln("  rm <path>            - remove file");
                 console_writeln("  stat <path>          - show file/dir info");
+            console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
             } else if (streq(line, "arch")) {
                 char pb[8], capb[16];
                 u32_to_dec((uint32_t)(sizeof(void*) * 8u), pb);
@@ -354,6 +355,10 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "allocstress")) {
                 serial_writeln("[cmd] allocstress");
                 run_alloc_stress(); console_writeln("allocstress done");
+            } else if (streq(line, "defrag")) {
+                serial_writeln("[cmd] defrag");
+                int moved = uc_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
+                console_write("defrag moved: "); console_writeln(mb);
             } else if (streq(line, "reboot")) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {

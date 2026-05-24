@@ -27,6 +27,8 @@ uchandle_t uc_alloc(uint64_t bytes);
 int uc_free(uchandle_t h);
 int uc_write(uchandle_t h, const void* src, uint64_t len);
 int uc_read(uchandle_t h, uint64_t offset, void* dst, uint64_t len);
+int uc_defragment(uchandle_t h);
+int uc_defrag_all(void);
 
 uint64_t uc_size(uchandle_t h);
 uint64_t uc_used(uchandle_t h);
