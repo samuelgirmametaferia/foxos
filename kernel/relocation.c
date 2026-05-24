@@ -1,6 +1,7 @@
 #include "relocation.h"
 #include "memory.h"
 #include "serial.h"
+#include "quiesce.h"
 
 static relocation_status_t g_status = {0,0,0};
 
@@ -11,6 +12,9 @@ int relocation_compact_multi(int max_passes) {
     g_status.last_moved = 0;
     g_status.last_passes = 0;
 
+    /* ask subsystems to quiesce before compaction */
+    quiesce_enter_all();
+
     for (int pass = 0; pass < max_passes; ++pass) {
         heap_shrink_all();
         int moved = move_defrag_all();
@@ -19,6 +23,9 @@ int relocation_compact_multi(int max_passes) {
         serial_write("[reloc] pass "); serial_writeln("done");
         if (moved == 0) break;
     }
+
+    /* resume subsystems */
+    quiesce_exit_all();
 
     g_status.running = 0;
     return g_status.last_moved;
