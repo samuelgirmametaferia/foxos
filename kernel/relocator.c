@@ -6,6 +6,12 @@
 
 static relocator_status_t state;
 
+static void serial_u64(uint64_t v) {
+    char buf[32]; int n=0; if (v==0) { buf[n++]='0'; buf[n]=0; serial_write(buf); return; }
+    char tmp[32]; int t=0; while(v){ tmp[t++]=(char)('0'+(v%10)); v/=10; }
+    while(t--) buf[n++]=tmp[t]; buf[n]=0; serial_write(buf);
+}
+
 void relocator_init(void) {
     state.enabled = 0;
     state.threshold_pages = 64; /* default low free pages threshold */
