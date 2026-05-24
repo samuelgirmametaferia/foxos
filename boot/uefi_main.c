@@ -576,6 +576,10 @@ static EFI_STATUS build_boot_info(
     boot_framebuffer_t framebuffer;
     get_graphics(&framebuffer);
 
+    /* Log framebuffer base to help diagnose why framebuffer may be missing */
+    serial_writeln("[uefi] FB base reported by get_graphics:");
+    serial_print_hex64((uint64_t)framebuffer.framebuffer_base);
+
     /* If a framebuffer is present, clear firmware splash so kernel console is visible in GUI */
     if (framebuffer.framebuffer_base != 0 && framebuffer.framebuffer_size > 0) {
         serial_writeln("[uefi] clearing firmware framebuffer");
