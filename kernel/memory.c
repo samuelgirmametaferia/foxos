@@ -3,6 +3,7 @@
 #include "memory.h"
 #include "boot.h"
 #include "serial.h"
+#include "console.h"
 
 #define ALIGN_UP(value, align) (((value) + ((align) - 1u)) & ~((align) - 1u))
 #define MIN_HEAP_SPLIT 8u
