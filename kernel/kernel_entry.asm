@@ -52,8 +52,8 @@ pd15:   resq 512
 
 section .text
 kernel_entry:
-    ; save boot_info pointer
-    mov rbx, rdi
+    ; save boot_info pointer on stack
+    push rdi
 
     ; clear BSS
     lea rdi, [__bss_start]
@@ -238,7 +238,7 @@ kernel_entry:
     out dx, al
 
     ; restore boot_info pointer and call C entry
-    mov rdi, rbx
+    pop rdi
     call kernel_main
 
     ; serial marker 'E' after return (should not happen)
