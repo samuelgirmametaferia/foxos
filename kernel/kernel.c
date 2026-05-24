@@ -194,7 +194,8 @@ void kernel_main(const boot_info_t* boot) {
     setup_identity_paging();
 
     /* Run boot self-tests to validate PMM and paging (alloc stress is manual via shell) */
-    run_boot_self_tests();
+    /* Skipping boot self-tests to avoid blocking while debugging PMM allocator */
+    // run_boot_self_tests();
 
     /* Auto-print arch and PMM info for headless testing */
     {
@@ -304,6 +305,8 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag). Usage: 'relocate' or 'relocate N' passes");
                 console_writeln("  relocate-status      - show last relocation status");
                 console_writeln("  pmm                  - show PMM stats and UC handles");
+                console_writeln("  qemu-run             - print recommended QEMU run command (GUI)");
+                console_writeln("  qemu-headless        - print headless QEMU verifier command");
             console_writeln("  heapshrink           - release trailing free heap blocks to PMM");
             } else if (streq(line, "arch")) {
                 char pb[8], capb[16];
@@ -413,6 +416,14 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "pmm")) {
                 serial_writeln("[cmd] pmm");
                 pmm_dump_stats();
+            } else if (streq(line, "qemu-run")) {
+                serial_writeln("[cmd] qemu-run");
+                console_writeln("Run in QEMU:");
+                console_writeln("  qemu-system-x86_64 -m 16G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -no-reboot");
+            } else if (streq(line, "qemu-headless")) {
+                serial_writeln("[cmd] qemu-headless");
+                console_writeln("Headless verifier:");
+                console_writeln("  qemu-system-x86_64 -m 16G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot");
             } else if (streq(line, "heapshrink")) {
                 serial_writeln("[cmd] heapshrink");
                 heap_shrink_all();

@@ -278,9 +278,11 @@ static void memcopy(void* dst, const void* src, uint32_t len) {
 
 static ucdesc_t* get_uc(uchandle_t h) {
     if (h == 0) return NULL;
-    ucdesc_t* d = &uc_table[h % MAX_UC];
-    if (d->magic != h) return NULL;
-    return d;
+    /* Linear search for matching magic - handles are random and not encoded with index */
+    for (uint32_t i = 0; i < MAX_UC; ++i) {
+        if (uc_table[i].magic == h) return &uc_table[i];
+    }
+    return NULL;
 }
 
 static paddr_t frame_addr_from_chunk(uint32_t idx) {
@@ -481,22 +483,63 @@ void setup_identity_paging(void) {
 
     serial_writeln("[mem] paging enabled");
 }
-paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {    if (pages == 0 || pages > pmm_free || pages > pmm_total) return 0;
+paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
+    static uint64_t last_idx = 0;
+    serial_write("[trace] pmm_alloc_contiguous_pages enter pages="); serial_u64(pages); serial_writeln("");
+    if (pages == 0 || pages > pmm_free || pages > pmm_total) {
+        serial_writeln("[trace] pmm_alloc_contiguous_pages fail early");
+        return 0;
+    }
 
-    uint64_t run = 0;
-    uint64_t start = 0;
-    for (uint64_t i = 0; i < pmm_total; ++i) {
-        if (!frame_is_used(i)) {
-            if (run == 0) start = i;
-            run++;
-            if (run == pages) {
-                for (uint64_t j = 0; j < pages; ++j) frame_mark_used(start + j);
-                return addr_for_frame_index(start);
+    /* Fast path for single page: scan bitmap words and find first zero bit */
+    if (pages == 1) {
+        for (uint64_t w = 0; w < pmm_bitmap_words; ++w) {
+            uint32_t word = pmm_bitmap[w];
+            if (word != 0xFFFFFFFFu) {
+                uint32_t free_bits = ~word;
+                /* find least-significant free bit */
+                uint32_t bit = 0;
+                while (bit < 32) {
+                    if (free_bits & (1u << bit)) {
+                        uint64_t idx = w * 32 + bit;
+                        if (idx >= pmm_total) break;
+                        frame_mark_used(idx);
+                        paddr_t addr = addr_for_frame_index(idx);
+                        last_idx = idx + 1;
+                        serial_write("[trace] pmm_alloc_contiguous_pages allocated single idx="); serial_u64(idx);
+                        serial_write(" addr="); serial_u64((uint64_t)addr); serial_writeln("");
+                        return addr;
+                    }
+                    ++bit;
+                }
             }
-        } else {
-            run = 0;
+        }
+        serial_writeln("[trace] pmm_alloc_contiguous_pages single no space");
+        return 0;
+    }
+
+    /* For multiple pages, use a simple bounded scan (safe, slower). */
+    uint64_t start = 0;
+    uint64_t limit = (pmm_total >= pages) ? (pmm_total - pages + 1) : 0;
+    for (uint64_t i = 0; i < limit; ++i) {
+        bool ok = true;
+        for (uint64_t j = 0; j < pages; ++j) {
+            if (frame_is_used(i + j)) { ok = false; break; }
+        }
+        if (ok) {
+            for (uint64_t j = 0; j < pages; ++j) frame_mark_used(i + j);
+            paddr_t addr = addr_for_frame_index(i);
+            last_idx = i + pages;
+            serial_write("[trace] pmm_alloc_contiguous_pages allocated start="); serial_u64(i);
+            serial_write(" addr="); serial_u64((uint64_t)addr); serial_writeln("");
+            return addr;
+        }
+        if ((i & 0x3FFu) == 0) {
+            serial_write("[trace] pmm scan at idx="); serial_u64(i); serial_writeln("");
         }
     }
+
+    serial_writeln("[trace] pmm_alloc_contiguous_pages no space (multi)");
     return 0;
 }
 
@@ -622,10 +665,14 @@ void kfree(void* ptr) {
 }
 
 uchandle_t uc_alloc(uint64_t bytes) {
+    serial_write("[trace] uc_alloc enter bytes="); serial_u64(bytes); serial_writeln("");
     uint64_t need64 = (bytes + PAGE_SIZE - 1u) / PAGE_SIZE;
     uint32_t need = (need64 > 0xFFFFFFFFu) ? 0u : (uint32_t)need64;
     if (need == 0) need = 1;
-    if (need > 1024u) return 0;
+    if (need > 1024u) {
+        serial_writeln("[trace] uc_alloc too large");
+        return 0;
+    }
 
     ucdesc_t* d = NULL;
     for (uint32_t i = 0; i < MAX_UC; ++i) {
@@ -634,29 +681,37 @@ uchandle_t uc_alloc(uint64_t bytes) {
             break;
         }
     }
-    if (!d) return 0;
+    if (!d) {
+        serial_writeln("[trace] uc_alloc no descriptor");
+        return 0;
+    }
 
     uint32_t allocated = 0;
 
     /* If request is large, try contiguous allocation first for performance */
     const uint32_t CONTIG_THRESHOLD = 16; /* pages */
     if (need >= CONTIG_THRESHOLD) {
+        serial_write("[trace] uc_alloc attempting contiguous for pages="); serial_u64(need); serial_writeln("");
         paddr_t base = pmm_alloc_contiguous_pages(need);
         if (base) {
             uint64_t start_idx = frame_index_for_addr(base);
             for (uint32_t i = 0; i < need; ++i) d->chunk_idx[i] = (uint32_t)(start_idx + i);
             allocated = need;
+            serial_write("[trace] uc_alloc contiguous ok start_idx="); serial_u64(start_idx); serial_writeln("");
+        } else {
+            serial_writeln("[trace] uc_alloc contiguous failed");
         }
     }
 
     /* Fallback: allocate individual frames */
     for (; allocated < need; ++allocated) {
         paddr_t addr = pmm_alloc_frame();
-        if (!addr) break;
+        if (!addr) { serial_write("[trace] uc_alloc frame alloc failed at allocated="); serial_u64(allocated); serial_writeln(""); break; }
         d->chunk_idx[allocated] = (uint32_t)frame_index_for_addr(addr);
     }
 
     if (allocated != need) {
+        serial_write("[trace] uc_alloc cleaning up allocated="); serial_u64(allocated); serial_writeln("");
         for (uint32_t j = 0; j < allocated; ++j) {
             pmm_free_frame(frame_addr_from_chunk(d->chunk_idx[j]));
         }
@@ -669,6 +724,7 @@ uchandle_t uc_alloc(uint64_t bytes) {
     d->total_chunks = need;
     d->used_bytes = 0;
     d->magic = (rnd32() | 1u);
+    serial_write("[trace] uc_alloc success magic="); serial_u32(d->magic); serial_writeln("");
     return d->magic;
 }
 
@@ -691,13 +747,15 @@ int uc_free(uchandle_t h) {
    updated to point to the new contiguous frames and old frames are freed.
    Returns 0 on success, -1 on failure (no contiguous space or invalid handle). */
 int uc_defragment(uchandle_t h) {
+    serial_write("[trace] uc_defragment enter handle="); serial_u32((uint32_t)h); serial_writeln("");
     ucdesc_t* d = get_uc(h);
-    if (!d) return -1;
+    if (!d) { serial_writeln("[trace] uc_defragment invalid handle"); return -1; }
     uint32_t pages = d->total_chunks;
-    if (pages == 0) return -1;
+    if (pages == 0) { serial_writeln("[trace] uc_defragment zero pages"); return -1; }
 
+    serial_write("[trace] uc_defragment requesting contiguous pages="); serial_u32(pages); serial_writeln("");
     paddr_t base = pmm_alloc_contiguous_pages(pages);
-    if (!base) return -1;
+    if (!base) { serial_writeln("[trace] uc_defragment no contiguous space"); return -1; }
 
     /* copy used bytes from old scattered frames into contiguous region */
     uint64_t bytes = d->used_bytes;
@@ -713,6 +771,8 @@ int uc_defragment(uchandle_t h) {
         pos += n;
     }
 
+    serial_writeln("[trace] uc_defragment copy done");
+
     /* free old frames */
     for (uint32_t i = 0; i < pages; ++i) {
         pmm_free_frame(frame_addr_from_chunk(d->chunk_idx[i]));
@@ -722,6 +782,7 @@ int uc_defragment(uchandle_t h) {
     uint64_t start_idx = frame_index_for_addr(base);
     for (uint32_t i = 0; i < pages; ++i) d->chunk_idx[i] = (uint32_t)(start_idx + i);
 
+    serial_write("[trace] uc_defragment success new_start="); serial_u64(start_idx); serial_writeln("");
     return 0;
 }
 

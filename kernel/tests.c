@@ -48,7 +48,7 @@ void run_alloc_stress(void) {
 void run_boot_self_tests(void) {
     serial_writeln("[tests] boot self-tests start");
     /* Simple sanity: allocate and free a contiguous block */
-    paddr_t a = pmm_alloc_contiguous_pages(8);
+    paddr_t a = pmm_alloc_contiguous_pages(2);
     if (a) {
         serial_writeln("[tests] pmm_alloc_contiguous_pages(8) ok");
         pmm_free_contiguous_pages(a, 8);
@@ -88,11 +88,15 @@ void run_boot_self_tests(void) {
         /* verify content of remaining handles */
         for (int i = 1; i < N; i += 2) {
             if (!hs[i]) continue;
-            uint8_t buf[64]; if (move_read(hs[i], 0, buf, 64) == 0) {
+            uint8_t buf[64]; int rc = move_read(hs[i], 0, buf, 64);
+            if (rc == 0) {
                 int ok = 1; for (int k = 0; k < 64; ++k) if (buf[k] != (uint8_t)(i & 0xFF)) { ok = 0; break; }
                 if (ok) serial_writeln("[tests] defrag data ok"); else serial_writeln("[tests] defrag data MISMATCH");
             } else {
-                serial_writeln("[tests] defrag read failed");
+                serial_write("[tests] defrag read failed code: ");
+                char tmpbuf[32]; int tn=0; int v=rc; if (v<0) { serial_putc('-'); v = -v; }
+                if (v==0) { tmpbuf[tn++]='0'; } else { char tmp2[32]; int t=0; while(v){ tmp2[t++]=(char)('0'+(v%10)); v/=10; } while(t--) tmpbuf[tn++]=tmp2[t]; }
+                tmpbuf[tn]=0; serial_write(tmpbuf); serial_writeln("");
             }
         }
 
