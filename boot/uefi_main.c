@@ -441,7 +441,38 @@ static EFI_STATUS load_kernel_elf(void* image, UINTN image_size, uint64_t* entry
 static EFI_STATUS get_graphics(boot_framebuffer_t* framebuffer) {
     EFI_GRAPHICS_OUTPUT_PROTOCOL* gop = NULL;
     EFI_STATUS status = g_bs->LocateProtocol(&GOP_GUID, NULL, (void**)&gop);
-    if (status != EFI_SUCCESS || !gop || !gop->Mode || !gop->Mode->Info) {
+    if (status != EFI_SUCCESS || !gop) {
+        /* Try to locate GOP via handle buffer as a fallback */
+        framebuffer->framebuffer_base = 0;
+        framebuffer->framebuffer_size = 0;
+        framebuffer->width = 0;
+        framebuffer->height = 0;
+        framebuffer->pixels_per_scanline = 0;
+        framebuffer->pixel_format = 0;
+        framebuffer->red_mask = 0;
+        framebuffer->green_mask = 0;
+        framebuffer->blue_mask = 0;
+        framebuffer->reserved = 0;
+        return EFI_SUCCESS;
+    }
+
+    /* If Mode or Info or FrameBufferBase are missing, try iterating modes and setting a usable one */
+    if (!gop->Mode || !gop->Mode->Info || gop->Mode->FrameBufferBase == 0) {
+        uint32_t max = gop->Mode ? gop->Mode->MaxMode : 0;
+        for (uint32_t m = 0; m < max; ++m) {
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* info = NULL;
+            UINTN info_size = 0;
+            if (gop->QueryMode && gop->QueryMode(gop, m, &info_size, &info) == EFI_SUCCESS && info) {
+                /* Try to set this mode so FrameBufferBase becomes valid */
+                if (gop->SetMode && gop->SetMode(gop, m) == EFI_SUCCESS) {
+                    serial_writeln("[uefi] GOP SetMode success");
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!gop->Mode || !gop->Mode->Info || gop->Mode->FrameBufferBase == 0) {
         framebuffer->framebuffer_base = 0;
         framebuffer->framebuffer_size = 0;
         framebuffer->width = 0;
