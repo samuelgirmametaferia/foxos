@@ -2,11 +2,23 @@
 #include <stddef.h>
 #include "memory.h"
 #include "boot.h"
+#include "drivers/serial.h"
 
 #define ALIGN_UP(value, align) (((value) + ((align) - 1u)) & ~((align) - 1u))
 #define MIN_HEAP_SPLIT 8u
 
 extern uint8_t __bss_end;
+
+static void serial_u64(uint64_t v) {
+    char buf[32]; int n=0; if (v==0) { buf[n++]='0'; buf[n]=0; serial_write(buf); return; }
+    char tmp[32]; int t=0; while(v){ tmp[t++]=(char)('0'+(v%10)); v/=10; }
+    while(t--) buf[n++]=tmp[t]; buf[n]=0; serial_write(buf);
+}
+
+static void serial_u32(uint32_t v) {
+    serial_u64((uint64_t)v);
+}
+
 
 typedef struct heap_block {
     uint32_t size;
@@ -273,6 +285,17 @@ static paddr_t frame_addr_from_chunk(uint32_t idx) {
 }
 
 void mem_init(const boot_info_t* boot) {
+    serial_writeln("[mem] mem_init start");
+    if (boot && boot->magic == FOX_BOOT_INFO_MAGIC) {
+        serial_write("[mem] memory_map_count: "); serial_u64(boot->memory_map_count); serial_writeln("");
+        if (boot->memory_map_count > 0 && boot->memory_map) {
+            serial_write("[mem] first region: type="); serial_u64(boot->memory_map[0].type);
+            serial_write(" start="); serial_u64(boot->memory_map[0].physical_start);
+            serial_write(" pages="); serial_u64(boot->memory_map[0].page_count);
+            serial_writeln("");
+        }
+    }
+
     uintptr_t initial = align_up_ptr((uintptr_t)&__bss_end, PAGE_SIZE);
 
     /* determine highest physical address from memory map */
