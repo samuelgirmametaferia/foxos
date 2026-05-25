@@ -410,8 +410,8 @@ void kernel_main(const boot_info_t* boot) {
 
     /* scheduler: enable basic threading with an idle task */
     scheduler_init();
-    scheduler_create(idle_thread);
-    /* start the scheduler manually via shell command once ready */
+    scheduler_set_idle(idle_thread);
+    /* preemptive scheduler remains gated until context switching is stabilized */
 
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
