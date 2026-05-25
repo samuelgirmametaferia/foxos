@@ -15,6 +15,7 @@
 #include "relocation.h"
 #include "relocator.h"
 #include "sched.h"
+#include "smp.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -329,6 +330,8 @@ void kernel_main(const boot_info_t* boot) {
 
     idt_init();
     serial_writeln("[foxos] idt ready");
+
+    smp_init();
 
     timer_init(100);
     serial_writeln("[foxos] timer online");

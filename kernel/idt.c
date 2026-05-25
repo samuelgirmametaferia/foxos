@@ -47,6 +47,40 @@ static void pic_remap(void) {
     outb(0xA1, 0x01); io_wait();
 }
 
+void idt_mask_irq(uint8_t irq) {
+    uint16_t port = (irq < 8) ? 0x21 : 0xA1;
+    uint8_t line = (uint8_t)(irq & 7u);
+    uint8_t mask = inb(port);
+    mask |= (uint8_t)(1u << line);
+    outb(port, mask);
+}
+
+void idt_unmask_irq(uint8_t irq) {
+    uint16_t port = (irq < 8) ? 0x21 : 0xA1;
+    uint8_t line = (uint8_t)(irq & 7u);
+    uint8_t mask = inb(port);
+    mask &= (uint8_t)~(1u << line);
+    outb(port, mask);
+}
+
+static void page_fault_handler(registers_t* regs) {
+    uint64_t cr2 = 0;
+    __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
+    serial_write("\n[PANIC] Page Fault @ ");
+    char buf[24];
+    uint64_t v = cr2;
+    int n = 0;
+    if (v == 0) { buf[n++]='0'; buf[n]=0; }
+    else { char t[24]; int ti=0; while(v){ t[ti++]=(char)('0'+(v%10)); v/=10; } while(ti--) buf[n++]=t[ti]; buf[n]=0; }
+    serial_write(buf);
+    serial_write(" err=");
+    v = regs->err_code; n=0;
+    if (v == 0) { buf[n++]='0'; buf[n]=0; }
+    else { char t[24]; int ti=0; while(v){ t[ti++]=(char)('0'+(v%10)); v/=10; } while(ti--) buf[n++]=t[ti]; buf[n]=0; }
+    serial_writeln(buf);
+    for (;;) ;
+}
+
 void idt_init(void) {
     __asm__ __volatile__("cli");
     for (int i = 0; i < 256; i++) {
@@ -59,11 +93,13 @@ void idt_init(void) {
     idt_p.limit = (uint16_t)(sizeof(idt_entry_t) * 256 - 1);
     idt_p.base = (uint64_t)(uintptr_t)&idt;
     idt_load(&idt_p);
+
+    idt_register_handler(14, page_fault_handler);
 }
 
 void idt_enable_interrupts(void) {
-    outb(0x21, 0xFC);
-    outb(0xA1, 0xFF);
+    idt_unmask_irq(0);
+    idt_unmask_irq(1);
     __asm__ __volatile__("sti");
 }
 
