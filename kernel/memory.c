@@ -43,6 +43,7 @@ static uint64_t pmm_total = 0;
 static uint64_t pmm_free = 0;
 static uintptr_t pmm_base = 0;                 /* physical address of first managed page */
 static uint64_t pmm_phys_end = 0;              /* highest physical address considered (bytes) */
+static uint64_t pmm_map_end = 0;               /* highest address to identity-map (bytes) */
 static uint64_t pmm_total_conv_pages = 0;        /* total conventional pages reported by firmware */
 
 static heap_block_t* heap_head = NULL;
@@ -333,17 +334,31 @@ void mem_init(const boot_info_t* boot) {
     /* record phys_end globally for paging setup */
     pmm_phys_end = phys_end;
 
-    /* allocate bitmap area immediately after kernel BSS */
-    /* Prefer sizing the bitmap by the firmware-reported conventional pages when available.
-       This avoids reserving an enormous low-memory bitmap area when the memory map includes
-       very high sparse regions (which previously pushed pmm_base up and made few pages
-       available for allocation). */
-    uint64_t frames_to_manage = 0;
-    if (pmm_total_conv_pages > 0) {
-        frames_to_manage = pmm_total_conv_pages;
-    } else {
-        frames_to_manage = (phys_end > initial) ? ((phys_end - initial) / PAGE_SIZE) : 0;
+    /* ensure paging map includes framebuffer and critical boot allocations */
+    uint64_t map_end = phys_end;
+    if (boot && boot->magic == FOX_BOOT_INFO_MAGIC) {
+        if (boot->framebuffer.framebuffer_base && boot->framebuffer.framebuffer_size) {
+            uint64_t fb_end = boot->framebuffer.framebuffer_base + boot->framebuffer.framebuffer_size;
+            if (fb_end > map_end) map_end = fb_end;
+        }
+        if (boot->kernel_base && boot->kernel_size) {
+            uint64_t kern_end = boot->kernel_base + boot->kernel_size;
+            if (kern_end > map_end) map_end = kern_end;
+        }
+        if (boot->loader_base && boot->loader_size) {
+            uint64_t loader_end = boot->loader_base + boot->loader_size;
+            if (loader_end > map_end) map_end = loader_end;
+        }
+        if (boot->handoff_base && boot->handoff_size) {
+            uint64_t handoff_end = boot->handoff_base + boot->handoff_size;
+            if (handoff_end > map_end) map_end = handoff_end;
+        }
     }
+    pmm_map_end = map_end;
+    serial_write("[mem] paging map_end: "); serial_u64(pmm_map_end); serial_writeln("");
+
+    /* allocate bitmap area immediately after kernel BSS */
+    uint64_t frames_to_manage = (pmm_map_end > 0) ? ((pmm_map_end + PAGE_SIZE - 1u) / PAGE_SIZE) : 0;
     uint64_t tentative_words = (frames_to_manage + 31u) / 32u;
     uint64_t bitmap_bytes = ALIGN_UP(tentative_words * sizeof(uint32_t), PAGE_SIZE);
     uintptr_t bitmap_addr = initial;
@@ -352,11 +367,9 @@ void mem_init(const boot_info_t* boot) {
         uintptr_t handoff_end = (uintptr_t)(boot->handoff_base + boot->handoff_size);
         if (handoff_end > bitmap_addr) bitmap_addr = align_up_ptr(handoff_end, PAGE_SIZE);
     }
-    uintptr_t new_base = align_up_ptr(bitmap_addr + bitmap_bytes, PAGE_SIZE);
-
-    /* now compute actual managed frames starting after bitmap */
-    pmm_base = new_base;
-    pmm_total = (phys_end > pmm_base) ? ((phys_end - pmm_base) / PAGE_SIZE) : 0;
+    /* manage physical memory from 0 up to map_end */
+    pmm_base = 0;
+    pmm_total = frames_to_manage;
     pmm_bitmap_words = (pmm_total + 31u) / 32u;
     if (pmm_total == 0) {
         pmm_bitmap = NULL;
@@ -383,7 +396,10 @@ void mem_init(const boot_info_t* boot) {
     }
 
     /* reserve the bitmap area itself so it isn't reused */
-    pmm_reserve_range((paddr_t)bitmap_addr, (uint64_t)(pmm_bitmap_words * sizeof(uint32_t)));
+    pmm_reserve_range((paddr_t)bitmap_addr, bitmap_bytes);
+
+    /* reserve the zero page to avoid NULL physical allocations */
+    pmm_reserve_range(0, PAGE_SIZE);
 
     /* reserve kernel/loader/handoff regions if provided */
     if (boot && boot->magic == FOX_BOOT_INFO_MAGIC) {
@@ -422,14 +438,12 @@ uint64_t pmm_phys_end_bytes(void) { return pmm_phys_end; }
 
 void setup_identity_paging(void) {
     serial_writeln("[mem] setup_identity_paging start");
-    if (pmm_phys_end == 0 && pmm_total_conv_pages == 0) {
-        serial_writeln("[mem] phys_end/conventional pages unknown, skipping paging");
+    if (pmm_map_end == 0 && pmm_phys_end == 0) {
+        serial_writeln("[mem] phys_end/map_end unknown, skipping paging");
         return;
     }
 
-    uint64_t bytes;
-    if (pmm_total_conv_pages > 0) bytes = pmm_total_conv_pages * PAGE_SIZE;
-    else bytes = pmm_phys_end;
+    uint64_t bytes = (pmm_map_end > 0) ? pmm_map_end : pmm_phys_end;
 
     /* compute number of PDs (each PD covers 1GiB via 512 * 2MiB entries) */
     uint64_t pd_count = (bytes + ((1ull<<30) - 1ull)) >> 30;
