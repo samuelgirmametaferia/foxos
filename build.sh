@@ -32,6 +32,7 @@ KERNEL_RAMFS_C="$FS_DIR/ramfs.c"
 KERNEL_INITRD_C="$FS_DIR/initrd.c"
 KERNEL_ATA_C="$DRIVERS_DIR/ata.c"
 KERNEL_SERIAL_C="$DRIVERS_DIR/serial.c"
+KERNEL_SCHED_C="$KDIR/sched.c"
 KERNEL_ENTRY_C="$BOOT_DIR/uefi_main.c"
 LINKER_SCRIPT="$KDIR/kernel.ld"
 
@@ -50,6 +51,7 @@ KOBJ_RAMFS="$BUILD/ramfs.o"
 KOBJ_INITRD="$BUILD/initrd.o"
 KOBJ_ATA="$BUILD/ata.o"
 KOBJ_SERIAL="$BUILD/serial.o"
+KOBJ_SCHED="$BUILD/sched.o"
 KOBJ_IDT="$BUILD/idt.o"
 KOBJ_IDT_STUBS="$BUILD/idt_stubs.o"
 KOBJ_TIMER="$BUILD/timer.o"
@@ -119,6 +121,9 @@ gcc $CFLAGS_COMMON -c "$KERNEL_ATA_C" -o "$KOBJ_ATA"
 echo "Compiling serial..."
 gcc $CFLAGS_COMMON -c "$KERNEL_SERIAL_C" -o "$KOBJ_SERIAL"
 
+echo "Compiling scheduler..."
+gcc $CFLAGS_COMMON -c "$KERNEL_SCHED_C" -o "$KOBJ_SCHED"
+
 echo "Compiling IDT..."
 gcc $CFLAGS_COMMON -c "$KDIR/idt.c" -o "$KOBJ_IDT"
 
@@ -136,7 +141,7 @@ clang --target=x86_64-pc-windows-gnu $UEFI_CFLAGS -c "$KERNEL_ENTRY_C" -o "$KOBJ
 
 echo "Linking kernel ELF ($LINKER_SCRIPT)..."
 ld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
 
 echo "Linking UEFI loader EFI application..."
 lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"
@@ -191,21 +196,23 @@ if [[ -n "$QEMU_CODE" ]]; then
   if [[ -n "$QEMU_VARS" ]]; then
     cp -f "$QEMU_VARS" "$BUILD/OVMF_VARS.fd"
   fi
-  HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE"
+  HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display gtk -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
   if [[ -n "$QEMU_VARS" ]]; then
     echo "Run in QEMU:"
-    HUMAN_QEMU_CMD="$HUMAN_QEMU_CMD -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd"
+    # Prefer GUI run when DISPLAY is available, otherwise recommend headless with serial-over-TCP
+  if [ -n "${DISPLAY:-}" ]; then
+    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display gtk -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+    echo "$HUMAN_QEMU_CMD"
+    echo "Headless verifier:"
+    echo "qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
   else
-    echo "Run in QEMU:"
+    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display none -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+    echo "No DISPLAY detected — recommended headless run with serial TCP:"
+    echo "$HUMAN_QEMU_CMD"
+    echo "Connect to serial with: nc 127.0.0.1 4444"
   fi
-  HUMAN_QEMU_CMD="$HUMAN_QEMU_CMD -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
-  echo "$HUMAN_QEMU_CMD"
-  echo "Headless verifier:"
-  if [[ -n "$QEMU_VARS" ]]; then
-    echo "qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
-  else
-    echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
   fi
+
 else
   echo "Run in QEMU:"
   echo "qemu-system-x86_64 -m 512 -serial stdio -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"

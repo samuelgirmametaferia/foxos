@@ -14,10 +14,12 @@
 #include "tests.h"
 #include "relocation.h"
 #include "relocator.h"
+#include "sched.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
 static int startswith(const char* s,const char* p){ while(*p){ if(*s++!=*p++) return 0; } return 1; }
+static int str_len(const char* s){ int n=0; while(s && s[n]) n++; return n; }
 
 static void list_cb(const char* name, int isDir){ console_write(isDir?"[D] ":"[F] "); console_writeln(name); }
 
@@ -68,6 +70,23 @@ static void input_set_line(char* line, int* plen, const char* src){
     line[i]=0; *plen=i; console_write(line);
 }
 
+static void line_append(char* line, int* plen, const char* text) {
+    int i = 0;
+    while (text[i] && *plen < 255) {
+        line[*plen] = text[i];
+        (*plen)++;
+        console_putc(text[i]);
+        i++;
+    }
+    line[*plen] = 0;
+}
+
+static void reprint_prompt(const char* line) {
+    console_putc('\n');
+    console_write("foxos> ");
+    console_write(line);
+}
+
 #define HISTORY_MAX 16
 static char history_buf[HISTORY_MAX][256];
 static int history_head = 0;
@@ -104,6 +123,113 @@ static int parse_two_args(const char* in, char* a, char* b, int cap) {
     while (*p && i < cap - 1) b[i++] = *p++;
     b[i] = 0;
     return 0;
+}
+
+static const char* g_commands[] = {
+    "help","arch","uptime","sleep","ls","pwd","cd","cat","echo","touch","cp","mv","mkdir","rm","stat",
+    "runtests","selftest","allocstress","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
+    "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status"
+};
+
+static int collect_command_matches(const char* prefix, const char** out, int cap) {
+    int count = 0;
+    int prefix_len = str_len(prefix);
+    for (uint32_t i = 0; i < (uint32_t)(sizeof(g_commands)/sizeof(g_commands[0])); ++i) {
+        if (startswith(g_commands[i], prefix)) {
+            if (count < cap) out[count] = g_commands[i];
+            count++;
+        }
+    }
+    (void)prefix_len;
+    return count;
+}
+
+typedef struct {
+    char prefix[64];
+    char names[16][32];
+    int is_dir[16];
+    int count;
+} tab_state_t;
+
+static tab_state_t g_tab;
+
+static void tab_ls_cb(const char* name, int isDir) {
+    if (!startswith(name, g_tab.prefix)) return;
+    if (g_tab.count < 16) {
+        str_copy(g_tab.names[g_tab.count], name, (int)sizeof(g_tab.names[g_tab.count]));
+        g_tab.is_dir[g_tab.count] = isDir ? 1 : 0;
+    }
+    g_tab.count++;
+}
+
+static void tab_complete(char* line, int* plen, const char* cwd) {
+    int start = 0;
+    for (int i = 0; i < *plen; ++i) {
+        if (line[i] == ' ') start = i + 1;
+    }
+    if (start >= *plen) return;
+    char token[128];
+    int tlen = *plen - start;
+    if (tlen >= (int)sizeof(token)) tlen = (int)sizeof(token) - 1;
+    for (int i = 0; i < tlen; ++i) token[i] = line[start + i];
+    token[tlen] = 0;
+    if (tlen == 0) return;
+
+    if (start == 0) {
+        const char* matches[16];
+        int count = collect_command_matches(token, matches, 16);
+        if (count == 1) {
+            const char* m = matches[0];
+            line_append(line, plen, m + tlen);
+            return;
+        }
+        if (count > 1) {
+            console_putc('\n');
+            int max = count < 16 ? count : 16;
+            for (int i = 0; i < max; ++i) { console_write(matches[i]); console_putc(' '); }
+            if (count > 16) console_write("... ");
+            reprint_prompt(line);
+        }
+        return;
+    }
+
+    char resolved[128];
+    path_resolve(resolved, cwd, token);
+    char dir[128];
+    char prefix[64];
+    int last = -1;
+    for (int i = 0; resolved[i]; ++i) if (resolved[i] == '/') last = i;
+    if (last < 0) { str_copy(dir, "/", (int)sizeof(dir)); str_copy(prefix, resolved, (int)sizeof(prefix)); }
+    else {
+        if (last == 0) { str_copy(dir, "/", (int)sizeof(dir)); }
+        else { int i=0; for (; i<last && i<(int)sizeof(dir)-1; ++i) dir[i]=resolved[i]; dir[i]=0; }
+        str_copy(prefix, resolved + last + 1, (int)sizeof(prefix));
+    }
+
+    str_copy(g_tab.prefix, prefix, (int)sizeof(g_tab.prefix));
+    g_tab.count = 0;
+    vfs_ls(dir, tab_ls_cb);
+
+    if (g_tab.count == 1) {
+        const char* m = g_tab.names[0];
+        int plen_prefix = str_len(prefix);
+        line_append(line, plen, m + plen_prefix);
+        if (g_tab.is_dir[0] && *plen < 255) {
+            line[*plen] = '/'; (*plen)++; line[*plen]=0; console_putc('/');
+        }
+        return;
+    }
+    if (g_tab.count > 1) {
+        console_putc('\n');
+        int max = g_tab.count < 16 ? g_tab.count : 16;
+        for (int i = 0; i < max; ++i) {
+            console_write(g_tab.names[i]);
+            if (g_tab.is_dir[i]) console_putc('/');
+            console_putc(' ');
+        }
+        if (g_tab.count > 16) console_write("... ");
+        reprint_prompt(line);
+    }
 }
 
 static void reboot_machine(void){
@@ -177,6 +303,12 @@ static int vfs_copy_file(const char* src, const char* dst) {
     if (r == 0) r = vfs_write(dst, buf, out);
     kfree(buf);
     return r;
+}
+
+static void idle_thread(void) {
+    for (;;) {
+        __asm__ __volatile__("hlt");
+    }
 }
 
 void kernel_main(const boot_info_t* boot) {
@@ -272,6 +404,11 @@ void kernel_main(const boot_info_t* boot) {
     /* init relocator */
     relocator_init();
     serial_writeln("[foxos] relocator initialized");
+
+    /* scheduler: enable basic threading with an idle task */
+    scheduler_init();
+    scheduler_create(idle_thread);
+    /* start the scheduler manually via shell command once ready */
 
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
@@ -517,6 +654,8 @@ void kernel_main(const boot_info_t* boot) {
             }
             len = 0; console_write("foxos> "); serial_write("foxos> ");        } else if (ch == '\b') {
             if (len > 0) { len--; console_putc('\b'); }
+        } else if (ch == '\t') {
+            tab_complete(line, &len, cwd);
         } else if (ch >= 32 && ch <= 126) {
             if (history_browse != -1){ history_browse = -1; edit_saved_valid = 0; }
             if (len < (int)sizeof(line)-1) { line[len++] = (char)ch; console_putc((char)ch); }
