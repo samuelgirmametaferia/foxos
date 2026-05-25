@@ -2,6 +2,9 @@
 #include "boot.h"
 #include "console.h"
 #include "io.h"
+#include "quiesce.h"
+#include "timer.h"
+#include "serial.h"
 
 #define VGA_MEM ((volatile uint16_t*)0xB8000)
 #define VGA_COLS 80
@@ -19,6 +22,32 @@ static uint32_t fb_height = 0;
 static uint32_t fb_stride = 0;
 static int fb_cols = 0;
 static int fb_rows = 0;
+
+static volatile int g_console_quiesced = 0;
+
+static void console_quiesce_cb(int enter) {
+    g_console_quiesced = enter ? 1 : 0;
+    /* Avoid calling serial_write from here; calling into serial during quiesce
+       callbacks can deadlock if serial's quiesce callback hasn't run yet. */
+}
+
+static int interrupts_enabled(void) {
+    unsigned long flags;
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+        "pop %0\n\t"
+        : "=r" (flags)
+        :
+        : "memory"
+    );
+    return (flags & (1ul << 9)) != 0;
+}
+
+static void console_wait_quiesce(void) {
+    if (!g_console_quiesced) return;
+    if (!interrupts_enabled()) return;
+    while (g_console_quiesced) timer_sleep(1);
+}
 
 static const uint32_t vga_palette[16] = {
     /* Bright color set (ARGB 0x00RRGGBB), index 0 = black background */
@@ -178,6 +207,8 @@ void console_init(const boot_info_t* boot) {
     fb_init(boot);
     console_clear();
     vga_hide_cursor();
+    /* register quiesce callback */
+    quiesce_register(console_quiesce_cb);
 }
 
 void console_clear(void) {
@@ -201,6 +232,7 @@ static void fb_newline(void) {
 }
 
 void console_putc(char c) {
+    console_wait_quiesce();
     if (fb_active) {
         if (c == '\n') {
             fb_newline();
