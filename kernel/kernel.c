@@ -194,8 +194,7 @@ void kernel_main(const boot_info_t* boot) {
     setup_identity_paging();
 
     /* Run boot self-tests to validate PMM and paging (alloc stress is manual via shell) */
-    /* Skipping automatic boot self-tests to avoid blocking in allocator during debugging. Use 'runtests' or 'selftest' from shell. */
-    // run_boot_self_tests();
+    run_boot_self_tests();
 
     /* Auto-print arch and PMM info for headless testing */
     {
