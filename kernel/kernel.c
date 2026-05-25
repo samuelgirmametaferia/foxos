@@ -91,6 +91,21 @@ static int parse_hex8(const char* s, uint8_t* out){ if(!s||!*s) return -1; uint3
 
 static inline void io_wait_short(void){ for(volatile int i=0;i<10000;++i) __asm__ __volatile__("nop"); }
 
+static int parse_two_args(const char* in, char* a, char* b, int cap) {
+    const char* p = in;
+    while (*p == ' ') p++;
+    if (!*p) return -1;
+    int i = 0;
+    while (*p && *p != ' ' && i < cap - 1) a[i++] = *p++;
+    a[i] = 0;
+    while (*p == ' ') p++;
+    if (!*p) return -1;
+    i = 0;
+    while (*p && i < cap - 1) b[i++] = *p++;
+    b[i] = 0;
+    return 0;
+}
+
 static void reboot_machine(void){
     __asm__ __volatile__("cli");
     serial_writeln("[sys] reboot: cpu reset");
@@ -144,6 +159,24 @@ static int vfs_rm_recursive(const char* path){
         int r = vfs_rm_recursive(child); if (r != 0) return r;
     }
     return vfs_rm(path);
+}
+
+static int vfs_copy_file(const char* src, const char* dst) {
+    vfs_stat_t st;
+    if (vfs_stat(src, &st) != 0) return -1;
+    if (st.isDir) return -2;
+    if (st.size == 0) {
+        return vfs_write(dst, "", 0);
+    }
+    if (st.size > 0xFFFFFFFFu) return -3;
+    uint32_t size32 = (uint32_t)st.size;
+    char* buf = (char*)kmalloc(size32);
+    if (!buf) return -4;
+    uint64_t out = 0;
+    int r = vfs_read(src, buf, size32, &out);
+    if (r == 0) r = vfs_write(dst, buf, out);
+    kfree(buf);
+    return r;
 }
 
 void kernel_main(const boot_info_t* boot) {
@@ -294,8 +327,12 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  cd <dir>             - change directory");
                 console_writeln("  cat <path>           - print file");
                 console_writeln("  echo TEXT > PATH     - write file");
+                console_writeln("  touch <path>         - create empty file");
+                console_writeln("  cp <src> <dst>       - copy file");
+                console_writeln("  mv <src> <dst>       - move/rename file");
                 console_writeln("  mkdir <dir>          - create directory");
                 console_writeln("  rm <path>            - remove file");
+                console_writeln("  rm -r <path>         - remove directory recursively");
                 console_writeln("  stat <path>          - show file/dir info");
                 console_writeln("  runtests             - run boot self-tests + alloc stress");
                 console_writeln("  selftest             - run boot self-tests only");
@@ -348,8 +385,54 @@ void kernel_main(const boot_info_t* boot) {
                     *gt = 0; char path_in[128]; char* path = gt+1; while(*path==' ') path++;
                     path_resolve(path_in, cwd, path); uint64_t l=0; while(p[l]) l++; if (vfs_write(path_in,p,l)==0) console_writeln("ok"); else console_writeln("write failed");
                 }
+            } else if (startswith(line, "touch ")) {
+                const char* p = line + 6; while (*p == ' ') p++;
+                if (!*p) { console_writeln("touch: path required"); }
+                else {
+                    char path[128]; path_resolve(path, cwd, p);
+                    if (vfs_write(path, "", 0) == 0) console_writeln("ok"); else console_writeln("touch failed");
+                }
+            } else if (startswith(line, "cp ")) {
+                char a[128], b[128];
+                if (parse_two_args(line+3, a, b, (int)sizeof(a)) != 0) {
+                    console_writeln("cp: usage cp SRC DST");
+                } else {
+                    char src[128], dst[128];
+                    path_resolve(src, cwd, a);
+                    path_resolve(dst, cwd, b);
+                    int r = vfs_copy_file(src, dst);
+                    if (r == 0) console_writeln("ok");
+                    else if (r == -2) console_writeln("cp: is a directory");
+                    else console_writeln("cp: failed");
+                }
+            } else if (startswith(line, "mv ")) {
+                char a[128], b[128];
+                if (parse_two_args(line+3, a, b, (int)sizeof(a)) != 0) {
+                    console_writeln("mv: usage mv SRC DST");
+                } else {
+                    char src[128], dst[128];
+                    path_resolve(src, cwd, a);
+                    path_resolve(dst, cwd, b);
+                    int r = vfs_copy_file(src, dst);
+                    if (r == 0) {
+                        if (vfs_rm(src) == 0) console_writeln("ok");
+                        else console_writeln("mv: remove failed");
+                    } else if (r == -2) {
+                        console_writeln("mv: dir not supported");
+                    } else {
+                        console_writeln("mv: failed");
+                    }
+                }
             } else if (startswith(line, "mkdir ")) {
                 char path[128]; path_resolve(path, cwd, line+6); if (vfs_mkdir(path)==0) console_writeln("ok"); else console_writeln("mkdir failed");
+            } else if (startswith(line, "rm -r ") || startswith(line, "rm -rf ")) {
+                const char* p = line + (line[5] == 'f' ? 7 : 6);
+                while (*p == ' ') p++;
+                if (!*p) { console_writeln("rm: path required"); }
+                else {
+                    char path[128]; path_resolve(path, cwd, p);
+                    if (vfs_rm_recursive(path) == 0) console_writeln("ok"); else console_writeln("rm failed");
+                }
             } else if (startswith(line, "rm ")) {
                 char path[128]; path_resolve(path, cwd, line+3); if (vfs_rm(path)==0) console_writeln("ok"); else console_writeln("rm failed");
             } else if (startswith(line, "stat ")) {
