@@ -1,0 +1,9 @@
+[foxos] serial online
+[foxos] idt ready
+[foxos] timer online
+[foxos] console ready
+[foxos] memory init done
+[foxos] vfs/initrd ready
+[foxos] ata init done
+[foxos] keyboard ready
+foxos> 

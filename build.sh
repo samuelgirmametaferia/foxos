@@ -34,6 +34,8 @@ KERNEL_ATA_C="$DRIVERS_DIR/ata.c"
 KERNEL_SERIAL_C="$DRIVERS_DIR/serial.c"
 KERNEL_SCHED_C="$KDIR/sched.c"
 KERNEL_SMP_C="$KDIR/smp.c"
+KERNEL_PERCPU_C="$KDIR/percpu.c"
+KERNEL_APIC_C="$KDIR/apic.c"
 KERNEL_ENTRY_C="$BOOT_DIR/uefi_main.c"
 LINKER_SCRIPT="$KDIR/kernel.ld"
 
@@ -54,6 +56,8 @@ KOBJ_ATA="$BUILD/ata.o"
 KOBJ_SERIAL="$BUILD/serial.o"
 KOBJ_SCHED="$BUILD/sched.o"
 KOBJ_SMP="$BUILD/smp.o"
+KOBJ_PERCPU="$BUILD/percpu.o"
+KOBJ_APIC="$BUILD/apic.o"
 KOBJ_IDT="$BUILD/idt.o"
 KOBJ_IDT_STUBS="$BUILD/idt_stubs.o"
 KOBJ_TIMER="$BUILD/timer.o"
@@ -129,6 +133,12 @@ gcc $CFLAGS_COMMON -c "$KERNEL_SCHED_C" -o "$KOBJ_SCHED"
 echo "Compiling SMP..."
 gcc $CFLAGS_COMMON -c "$KERNEL_SMP_C" -o "$KOBJ_SMP"
 
+echo "Compiling per-CPU support..."
+gcc $CFLAGS_COMMON -c "$KERNEL_PERCPU_C" -o "$KOBJ_PERCPU"
+
+echo "Compiling APIC support..."
+gcc $CFLAGS_COMMON -c "$KERNEL_APIC_C" -o "$KOBJ_APIC"
+
 echo "Compiling IDT..."
 gcc $CFLAGS_COMMON -c "$KDIR/idt.c" -o "$KOBJ_IDT"
 
@@ -146,7 +156,7 @@ clang --target=x86_64-pc-windows-gnu $UEFI_CFLAGS -c "$KERNEL_ENTRY_C" -o "$KOBJ
 
 echo "Linking kernel ELF ($LINKER_SCRIPT)..."
 ld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_PERCPU" "$KOBJ_APIC" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
 
 echo "Linking UEFI loader EFI application..."
 lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"

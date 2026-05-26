@@ -21,10 +21,24 @@ typedef struct {
 static idt_entry_t idt[256] __attribute__((aligned(16)));
 static idt_ptr_t idt_p;
 static isr_t interrupt_handlers[256];
+static isr_t reserved_handlers[256];
 static const uint16_t KERNEL_CODE_SELECTOR = 0x38;
 
 extern void idt_load(void*);
 extern uint64_t isr_stub_table[];
+
+static void serial_u64_dec(uint64_t v) {
+    char buf[24];
+    int n = 0;
+    if (v == 0) { buf[n++] = '0'; buf[n] = 0; }
+    else {
+        char t[24]; int ti = 0;
+        while (v) { t[ti++] = (char)('0' + (v % 10)); v /= 10; }
+        while (ti--) buf[n++] = t[ti];
+        buf[n] = 0;
+    }
+    serial_write(buf);
+}
 
 static void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
     idt[num].offset_low = (uint16_t)(base & 0xFFFFu);
@@ -67,18 +81,45 @@ static void page_fault_handler(registers_t* regs) {
     uint64_t cr2 = 0;
     __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
     serial_write("\n[PANIC] Page Fault @ ");
-    char buf[24];
-    uint64_t v = cr2;
-    int n = 0;
-    if (v == 0) { buf[n++]='0'; buf[n]=0; }
-    else { char t[24]; int ti=0; while(v){ t[ti++]=(char)('0'+(v%10)); v/=10; } while(ti--) buf[n++]=t[ti]; buf[n]=0; }
-    serial_write(buf);
+    serial_u64_dec(cr2);
     serial_write(" err=");
-    v = regs->err_code; n=0;
-    if (v == 0) { buf[n++]='0'; buf[n]=0; }
-    else { char t[24]; int ti=0; while(v){ t[ti++]=(char)('0'+(v%10)); v/=10; } while(ti--) buf[n++]=t[ti]; buf[n]=0; }
-    serial_writeln(buf);
+    serial_u64_dec(regs->err_code);
+    serial_writeln("");
     for (;;) ;
+}
+
+int idt_is_exception(uint8_t int_no) {
+    return int_no < 32;
+}
+
+int idt_is_irq(uint8_t int_no) {
+    return int_no >= 32 && int_no < 48;
+}
+
+const char* idt_get_exception_name(uint8_t int_no) {
+    static const char* exception_messages[] = {
+        "Division By Zero", "Debug", "Non Maskable Interrupt", "Breakpoint",
+        "Into Detected Overflow", "Out of Bounds", "Invalid Opcode", "No Coprocessor",
+        "Double Fault", "Coprocessor Segment Overrun", "Bad TSS", "Segment Not Present",
+        "Stack Fault", "General Protection Fault", "Page Fault", "Unknown Interrupt",
+        "Coprocessor Fault", "Alignment Check", "Machine Check", "SIMD Exception",
+        "Virtualization Exception", "Control Protection Exception", "Reserved",
+        "Reserved", "Reserved", "Reserved", "Reserved", "Reserved", "Reserved",
+        "Hypervisor Injection Exception", "VMM Communication Exception", "Security Exception"
+    };
+    if (int_no < 32) return exception_messages[int_no];
+    return "Unknown Exception";
+}
+
+void idt_panic_handler(registers_t* regs, const char* message) {
+    serial_write("\n[PANIC] ");
+    serial_write(message);
+    serial_write(" at RIP=");
+    serial_u64_dec(regs->rip);
+    serial_write(" RSP context: ");
+    serial_u64_dec((uint64_t)(uintptr_t)regs);
+    serial_writeln("");
+    for(;;);
 }
 
 void idt_init(void) {
@@ -86,6 +127,7 @@ void idt_init(void) {
     for (int i = 0; i < 256; i++) {
         idt_set_gate((uint8_t)i, isr_stub_table[i], KERNEL_CODE_SELECTOR, 0x8E);
         interrupt_handlers[i] = 0;
+        reserved_handlers[i] = 0;
     }
     pic_remap();
     outb(0x21, 0xFF);
@@ -95,16 +137,22 @@ void idt_init(void) {
     idt_load(&idt_p);
 
     idt_register_handler(14, page_fault_handler);
+    serial_writeln("[idt] IDT initialized successfully");
 }
 
 void idt_enable_interrupts(void) {
     idt_unmask_irq(0);
     idt_unmask_irq(1);
     __asm__ __volatile__("sti");
+    serial_writeln("[idt] Interrupts enabled (IRQ0 and IRQ1 unmasked)");
 }
 
 void idt_register_handler(uint8_t n, isr_t handler) {
     interrupt_handlers[n] = handler;
+}
+
+void idt_register_reserved_handler(uint8_t n, isr_t handler) {
+    reserved_handlers[n] = handler;
 }
 
 static const char* exception_messages[] = {
@@ -119,38 +167,39 @@ static const char* exception_messages[] = {
 
 registers_t* interrupt_handler(registers_t* regs) {
     registers_t* out = regs;
+    
+    /* Send EOI (End of Interrupt) for PIC IRQs (32-47) */
     if (regs->int_no >= 32 && regs->int_no < 48) {
         if (regs->int_no >= 40) outb(0xA0, 0x20);
         outb(0x20, 0x20);
     }
 
+    /* Check for registered handler first */
     if (interrupt_handlers[regs->int_no] != 0) {
         interrupt_handlers[regs->int_no](regs);
-    } else if (regs->int_no < 32) {
+    } 
+    /* Check for reserved handler */
+    else if (regs->int_no < 32 && reserved_handlers[regs->int_no] != 0) {
+        reserved_handlers[regs->int_no](regs);
+    }
+    /* Handle unhandled exceptions */
+    else if (regs->int_no < 32) {
         serial_write("\n[PANIC] Exception: ");
         serial_write(exception_messages[regs->int_no]);
         serial_write(" (Int ");
-        char buf[24];
-        uint64_t v = regs->int_no;
-        int n = 0;
-        if (v == 0) {
-            buf[n++] = '0';
-            buf[n] = 0;
-        } else {
-            char t[24];
-            int ti = 0;
-            while (v) {
-                t[ti++] = (char)('0' + (v % 10));
-                v /= 10;
-            }
-            while (ti--) buf[n++] = t[ti];
-            buf[n] = 0;
-        }
-        serial_write(buf);
+        serial_u64_dec(regs->int_no);
         serial_writeln(")");
+        if (regs->int_no == 13) {  /* General Protection Fault */
+            serial_write("[PANIC] GPF rip="); serial_u64_dec(regs->rip);
+            serial_write(" cs="); serial_u64_dec(regs->cs);
+            serial_write(" rflags="); serial_u64_dec(regs->rflags);
+            serial_write(" err="); serial_u64_dec(regs->err_code);
+            serial_writeln("");
+        }
         for (;;) ;
     }
 
+    /* Call scheduler tick for timer interrupt (IRQ 0 = int 32) */
     if (regs->int_no == 32) {
         out = scheduler_tick(regs);
     }

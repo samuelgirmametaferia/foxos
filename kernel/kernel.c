@@ -16,6 +16,8 @@
 #include "relocator.h"
 #include "sched.h"
 #include "smp.h"
+#include "percpu.h"
+#include "apic.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -128,7 +130,7 @@ static int parse_two_args(const char* in, char* a, char* b, int cap) {
 
 static const char* g_commands[] = {
     "help","arch","uptime","sleep","ls","pwd","cd","cat","echo","touch","cp","mv","mkdir","rm","stat",
-    "runtests","selftest","allocstress","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
+    "runtests","selftest","allocstress","schedtest","inttest","cputest","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
     "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status"
 };
 
@@ -332,6 +334,11 @@ void kernel_main(const boot_info_t* boot) {
     serial_writeln("[foxos] idt ready");
 
     smp_init();
+    
+    percpu_init_bsp();
+    serial_writeln("[foxos] per-CPU support initialized");
+    
+    apic_init();
 
     timer_init(100);
     serial_writeln("[foxos] timer online");
@@ -411,7 +418,7 @@ void kernel_main(const boot_info_t* boot) {
     /* scheduler: enable basic threading with an idle task */
     scheduler_init();
     scheduler_set_idle(idle_thread);
-    /* preemptive scheduler remains gated until context switching is stabilized */
+    scheduler_start();
 
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
@@ -477,6 +484,9 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  runtests             - run boot self-tests + alloc stress");
                 console_writeln("  selftest             - run boot self-tests only");
                 console_writeln("  allocstress          - run allocation stress test only");
+                console_writeln("  schedtest            - run scheduler tests");
+                console_writeln("  inttest              - run interrupt stability tests");
+                console_writeln("  cputest              - run CPU/multicore detection tests");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
                 console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag). Usage: 'relocate' or 'relocate N' passes");
                 console_writeln("  relocate-status      - show last relocation status");
@@ -583,6 +593,9 @@ void kernel_main(const boot_info_t* boot) {
             console_writeln("  runtests             - run boot self-tests + alloc stress");
             console_writeln("  selftest             - run boot self-tests only");
             console_writeln("  allocstress          - run allocation stress test only");
+            console_writeln("  schedtest            - run scheduler tests");
+            console_writeln("  inttest              - run interrupt stability tests");
+            console_writeln("  cputest              - run CPU/multicore detection tests");
             } else if (streq(line, "runtests")) {
                 serial_writeln("[cmd] runtests");
                 run_boot_self_tests(); run_alloc_stress(); console_writeln("runtests done");
@@ -592,6 +605,15 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "allocstress")) {
                 serial_writeln("[cmd] allocstress");
                 run_alloc_stress(); console_writeln("allocstress done");
+            } else if (streq(line, "schedtest")) {
+                serial_writeln("[cmd] schedtest");
+                run_scheduler_tests(); console_writeln("schedtest done");
+            } else if (streq(line, "inttest")) {
+                serial_writeln("[cmd] inttest");
+                run_interrupt_stability_tests(); console_writeln("inttest done");
+            } else if (streq(line, "cputest")) {
+                serial_writeln("[cmd] cputest");
+                run_multicore_detection_test(); console_writeln("cputest done");
             } else if (streq(line, "defrag")) {
                 serial_writeln("[cmd] defrag");
                 int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);

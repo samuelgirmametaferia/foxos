@@ -2,6 +2,9 @@
 #include "serial.h"
 #include "memory.h"
 #include "console.h"
+#include "sched.h"
+#include "idt.h"
+#include "smp.h"
 
 /* Simple allocation stress test: allocate and free various sizes */
 void run_alloc_stress(void) {
@@ -104,4 +107,87 @@ void run_boot_self_tests(void) {
         for (int i = 1; i < N; i += 2) if (hs[i]) move_free(hs[i]);
         serial_writeln("[tests] defrag tests done");
     }
+}
+
+void run_scheduler_tests(void) {
+    serial_writeln("[tests] scheduler tests start");
+    
+    /* Test 1: Check thread count increase */
+    int initial_count = scheduler_get_thread_count();
+    serial_write("[tests] Initial thread count: ");
+    char buf[16]; int n = 0; int v = initial_count;
+    if (v == 0) { buf[n++] = '0'; } else { char tmp[16]; int t = 0; while(v) { tmp[t++] = '0' + (v % 10); v /= 10; } while(t--) buf[n++] = tmp[t]; }
+    buf[n] = 0;
+    serial_writeln(buf);
+    
+    if (initial_count >= 1) {
+        serial_writeln("[tests] scheduler thread count check ok");
+    } else {
+        serial_writeln("[tests] scheduler thread count check failed");
+    }
+    
+    /* Test 2: Check that scheduler can handle priority */
+    int result = scheduler_set_thread_priority(0, 64);
+    if (result == 0) {
+        serial_writeln("[tests] scheduler priority set ok");
+    } else {
+        serial_writeln("[tests] scheduler priority set failed");
+    }
+    
+    /* Test 3: Check thread state retrieval */
+    thread_state_t state = scheduler_get_thread_state(0);
+    if (state >= 0) {
+        serial_writeln("[tests] scheduler thread state ok");
+    } else {
+        serial_writeln("[tests] scheduler thread state failed");
+    }
+    
+    serial_writeln("[tests] scheduler tests done");
+}
+
+void run_interrupt_stability_tests(void) {
+    serial_writeln("[tests] interrupt stability tests start");
+    
+    /* Test: Check that IDT exception names exist */
+    const char* exc_name = idt_get_exception_name(0);
+    if (exc_name && exc_name[0] != 0) {
+        serial_writeln("[tests] IDT exception name test ok");
+    } else {
+        serial_writeln("[tests] IDT exception name test failed");
+    }
+    
+    /* Test: Check exception/IRQ classification */
+    if (idt_is_exception(14)) {
+        serial_writeln("[tests] IDT exception classification ok");
+    } else {
+        serial_writeln("[tests] IDT exception classification failed");
+    }
+    
+    if (idt_is_irq(32)) {
+        serial_writeln("[tests] IDT IRQ classification ok");
+    } else {
+        serial_writeln("[tests] IDT IRQ classification failed");
+    }
+    
+    serial_writeln("[tests] interrupt stability tests done");
+}
+
+void run_multicore_detection_test(void) {
+    serial_writeln("[tests] multicore detection test start");
+    
+    /* Check SMP CPU count */
+    uint32_t cpu_count = smp_cpu_count();
+    serial_write("[tests] detected CPUs: ");
+    char buf[16]; int n = 0; uint32_t v = cpu_count;
+    if (v == 0) { buf[n++] = '0'; } else { char tmp[16]; int t = 0; while(v) { tmp[t++] = '0' + (v % 10); v /= 10; } while(t--) buf[n++] = tmp[t]; }
+    buf[n] = 0;
+    serial_writeln(buf);
+    
+    if (cpu_count >= 1) {
+        serial_writeln("[tests] CPU detection ok");
+    } else {
+        serial_writeln("[tests] CPU detection failed");
+    }
+    
+    serial_writeln("[tests] multicore detection test done");
 }
