@@ -30,6 +30,7 @@ KERNEL_QUIESCE_C="$KDIR/quiesce.c"
 KERNEL_VFS_C="$FS_DIR/vfs.c"
 KERNEL_RAMFS_C="$FS_DIR/ramfs.c"
 KERNEL_INITRD_C="$FS_DIR/initrd.c"
+KERNEL_FAT32_C="$FS_DIR/fat32.c"
 KERNEL_ATA_C="$DRIVERS_DIR/ata.c"
 KERNEL_SERIAL_C="$DRIVERS_DIR/serial.c"
 KERNEL_SCHED_C="$KDIR/sched.c"
@@ -53,6 +54,7 @@ KOBJ_TESTS="$BUILD/tests.o"
 KOBJ_VFS="$BUILD/vfs.o"
 KOBJ_RAMFS="$BUILD/ramfs.o"
 KOBJ_INITRD="$BUILD/initrd.o"
+KOBJ_FAT32="$BUILD/fat32.o"
 KOBJ_ATA="$BUILD/ata.o"
 KOBJ_SERIAL="$BUILD/serial.o"
 KOBJ_SCHED="$BUILD/sched.o"
@@ -111,6 +113,9 @@ gcc $CFLAGS_COMMON -c "$KERNEL_VFS_C" -o "$KOBJ_VFS"
 gcc $CFLAGS_COMMON -c "$KERNEL_RAMFS_C" -o "$KOBJ_RAMFS"
 gcc $CFLAGS_COMMON -c "$KERNEL_INITRD_C" -o "$KOBJ_INITRD"
 
+echo "Compiling FAT32 filesystem..."
+gcc $CFLAGS_COMMON -c "$KERNEL_FAT32_C" -o "$KOBJ_FAT32"
+
 echo "Compiling tests..."
 gcc $CFLAGS_COMMON -c "$KERNEL_TESTS_C" -o "$KOBJ_TESTS"
 
@@ -161,7 +166,7 @@ clang --target=x86_64-pc-windows-gnu $UEFI_CFLAGS -c "$KERNEL_ENTRY_C" -o "$KOBJ
 
 echo "Linking kernel ELF ($LINKER_SCRIPT)..."
 ld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_PERCPU" "$KOBJ_APIC" "$KOBJ_IO_WAIT" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_FAT32" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_PERCPU" "$KOBJ_APIC" "$KOBJ_IO_WAIT" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER"
 
 echo "Linking UEFI loader EFI application..."
 lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"

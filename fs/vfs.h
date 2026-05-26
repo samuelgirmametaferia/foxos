@@ -12,6 +12,7 @@ typedef struct {
 
 void vfs_init(void);
 int vfs_mount_ramfs(void);
+int vfs_mount_fat32(uint32_t lba_offset);
 
 int vfs_mkdir(const char* path);
 int vfs_write(const char* path, const char* data, uint64_t len); // create or truncate

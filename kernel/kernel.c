@@ -235,26 +235,76 @@ static void tab_complete(char* line, int* plen, const char* cwd) {
     }
 }
 
-static void reboot_machine(void){
+static void system_shutdown_cleanup(void) {
+    /* Flush any pending disk I/O and close devices */
+    serial_writeln("[sys] shutdown: flushing I/O");
+    
+    /* Disable all interrupts */
     __asm__ __volatile__("cli");
-    serial_writeln("[sys] reboot: cpu reset");
+    
+    /* Stop scheduler */
+    scheduler_stop();
+    
+    serial_writeln("[sys] shutdown: cleanup complete");
+}
+
+static void reboot_machine(void){
+    system_shutdown_cleanup();
+    
+    serial_writeln("[sys] reboot: cpu reset via keyboard controller");
     console_writeln("rebooting...");
+    
+    /* Try keyboard controller reset first (0x64 is command port, 0xFE is reset command) */
     outb(0x64, 0xFE);
     io_wait_short();
+    timer_sleep(100);
+    
+    /* Try PCI reset register (0xCF9) */
     outb(0xCF9, 0x06);
     io_wait_short();
+    timer_sleep(100);
+    
+    /* Triple fault as last resort (load invalid IDT and cause fault) */
+    __asm__ __volatile__(
+        "lidt %0\n\t"
+        "int $0\n\t"
+        :
+        : "m" (*(char*)0)
+    );
+    
+    /* If all else fails, halt */
     for(;;){ __asm__ __volatile__("hlt"); }
 }
 
 static void poweroff_machine(void){
-    __asm__ __volatile__("cli");
+    system_shutdown_cleanup();
+    
+    serial_writeln("[sys] poweroff: ACPI PM");
+    console_writeln("powering off...");
+    
+    /* Try ACPI PM1a control register (port 0xB004) */
     outw(0xB004, 0x2000);
     io_wait_short();
+    timer_sleep(50);
+    
+    /* Try ACPI alternative (port 0x604) */
     outw(0x604, 0x2000);
     io_wait_short();
+    timer_sleep(50);
+    
+    /* Try another ACPI register (port 0x4004) */
     outw(0x4004, 0x3400);
     io_wait_short();
+    timer_sleep(50);
+    
+    /* Try APM shutdown command */
     outb(0xF4, 0x00);
+    io_wait_short();
+    timer_sleep(50);
+    
+    serial_writeln("[sys] poweroff: ACPI failed, halting CPU");
+    
+    /* If all else fails, halt */
     for(;;){ __asm__ __volatile__("hlt"); }
 }
 
