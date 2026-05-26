@@ -95,6 +95,18 @@ void keyboard_init(void) {
 }
 
 int keyboard_getchar(void) {
-    // Now just returns from buffer filled by ISR
+    // Non-blocking: returns immediately with -1 if no key
     return buf_get();
+}
+
+int keyboard_getchar_blocking(void) {
+    // Blocking: waits until a key is available
+    // For now, this busywaits since we don't have full I/O blocking yet
+    // In a real system, this would block on an interrupt handler
+    while (1) {
+        int ch = buf_get();
+        if (ch != -1) return ch;
+        // Yield to other threads with HLT
+        __asm__ __volatile__("hlt");
+    }
 }

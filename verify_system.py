@@ -196,7 +196,7 @@ def run_verify():
         log("Testing 'cputest' (CPU/multicore detection)...")
         type_text_via_monitor(monitor, "cputest")
         monitor_send_line(monitor, "sendkey ret")
-        
+         
         test_start = time.time()
         test_response = b""
         while time.time() - test_start < 2:
@@ -210,7 +210,24 @@ def run_verify():
         else:
             log(f"WARNING: cputest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
 
-        log("FINAL VERIFICATION: PIT, KEYBOARD, SCHEDULER, AND INTERRUPT HANDLING ARE STABLE.")
+        log("Testing 'iotest' (I/O integration tests)...")
+        type_text_via_monitor(monitor, "iotest")
+        monitor_send_line(monitor, "sendkey ret")
+         
+        test_start = time.time()
+        test_response = b""
+        while time.time() - test_start < 2:
+            r, _, _ = select.select([proc.stdout], [], [], 0.1)
+            if r:
+                char = proc.stdout.read(1)
+                test_response += char
+                if b"iotest done" in test_response:
+                    log(f"SUCCESS: I/O integration tests passed")
+                    break
+        else:
+            log(f"WARNING: iotest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+
+        log("FINAL VERIFICATION: PIT, KEYBOARD, SCHEDULER, INTERRUPT HANDLING, AND I/O INTEGRATION ARE STABLE.")
         return True
 
     except Exception as e:

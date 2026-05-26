@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include "idt.h"
 
+#define MAX_THREADS 64
+
 /* Thread states */
 typedef enum {
     THREAD_READY = 0,
@@ -25,3 +27,8 @@ void scheduler_thread_sleep(int thread_id, uint64_t ms);
 void scheduler_thread_wake(int thread_id);
 thread_state_t scheduler_get_thread_state(int thread_id);
 uint32_t scheduler_get_cpu_id(void);
+
+/* I/O blocking support */
+int scheduler_current_thread_id(void);
+int scheduler_block_current(void);
+int scheduler_unblock_thread(int thread_id);

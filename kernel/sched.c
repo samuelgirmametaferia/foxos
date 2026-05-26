@@ -141,6 +141,24 @@ uint32_t scheduler_get_cpu_id(void) {
     return 0; /* TODO: Return actual CPU ID from per-CPU area */
 }
 
+int scheduler_current_thread_id(void) {
+    return current_idx;
+}
+
+int scheduler_block_current(void) {
+    if (current_idx < 0 || current_idx >= thread_count) return -1;
+    threads[current_idx].state = THREAD_BLOCKED;
+    return 0;
+}
+
+int scheduler_unblock_thread(int thread_id) {
+    if (thread_id < 0 || thread_id >= thread_count) return -1;
+    if (threads[thread_id].state == THREAD_BLOCKED) {
+        threads[thread_id].state = THREAD_READY;
+    }
+    return 0;
+}
+
 registers_t* scheduler_tick(registers_t* regs) {
     scheduler_ticks++;
     

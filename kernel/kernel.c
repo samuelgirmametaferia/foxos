@@ -130,7 +130,7 @@ static int parse_two_args(const char* in, char* a, char* b, int cap) {
 
 static const char* g_commands[] = {
     "help","arch","uptime","sleep","ls","pwd","cd","cat","echo","touch","cp","mv","mkdir","rm","stat",
-    "runtests","selftest","allocstress","schedtest","inttest","cputest","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
+    "runtests","selftest","allocstress","schedtest","inttest","cputest","iotest","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
     "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status"
 };
 
@@ -487,6 +487,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  schedtest            - run scheduler tests");
                 console_writeln("  inttest              - run interrupt stability tests");
                 console_writeln("  cputest              - run CPU/multicore detection tests");
+                console_writeln("  iotest               - run I/O integration tests");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
                 console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag). Usage: 'relocate' or 'relocate N' passes");
                 console_writeln("  relocate-status      - show last relocation status");
@@ -596,6 +597,7 @@ void kernel_main(const boot_info_t* boot) {
             console_writeln("  schedtest            - run scheduler tests");
             console_writeln("  inttest              - run interrupt stability tests");
             console_writeln("  cputest              - run CPU/multicore detection tests");
+            console_writeln("  iotest               - run I/O integration tests");
             } else if (streq(line, "runtests")) {
                 serial_writeln("[cmd] runtests");
                 run_boot_self_tests(); run_alloc_stress(); console_writeln("runtests done");
@@ -614,6 +616,9 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "cputest")) {
                 serial_writeln("[cmd] cputest");
                 run_multicore_detection_test(); console_writeln("cputest done");
+            } else if (streq(line, "iotest")) {
+                serial_writeln("[cmd] iotest");
+                run_io_integration_test(); console_writeln("iotest done");
             } else if (streq(line, "defrag")) {
                 serial_writeln("[cmd] defrag");
                 int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);

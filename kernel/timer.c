@@ -1,8 +1,8 @@
 #include "timer.h"
 #include "idt.h"
 #include "io.h"
-
 #include "serial.h"
+#include "sched.h"
 
 static volatile uint64_t timer_ticks = 0;
 static uint32_t timer_freq = 0;
@@ -31,11 +31,30 @@ uint64_t timer_get_ticks(void) {
 }
 
 void timer_sleep(uint64_t ms) {
+    // Use HLT-based sleep instead of busy loop for efficiency
+    // This allows other threads/CPUs to run while sleeping
     uint64_t start_ticks = timer_ticks;
     uint64_t ticks_to_wait = (ms * timer_freq) / 1000u;
     if (ticks_to_wait == 0 && ms > 0) ticks_to_wait = 1;
 
     while (timer_ticks < start_ticks + ticks_to_wait) {
-        __asm__ __volatile__("" : : : "memory");
+        __asm__ __volatile__("hlt");
+    }
+}
+
+void timer_sleep_blocking(uint64_t ms) {
+    // Scheduler-aware sleep that yields to other threads
+    // Use this when you want the scheduler to run other threads
+    // while this one sleeps
+    int tid = scheduler_current_thread_id();
+    scheduler_thread_sleep(tid, ms);
+    
+    // Busy-wait for the sleep to complete while other threads run
+    uint64_t start_ticks = timer_ticks;
+    uint64_t ticks_to_wait = (ms * timer_freq) / 1000u;
+    if (ticks_to_wait == 0 && ms > 0) ticks_to_wait = 1;
+
+    while (timer_ticks < start_ticks + ticks_to_wait) {
+        __asm__ __volatile__("hlt");
     }
 }
