@@ -239,10 +239,7 @@ static void system_shutdown_cleanup(void) {
     /* Flush any pending disk I/O and close devices */
     serial_writeln("[sys] shutdown: flushing I/O");
     
-    /* Disable all interrupts */
-    __asm__ __volatile__("cli");
-    
-    /* Stop scheduler */
+    /* Stop scheduler - no more thread switching */
     scheduler_stop();
     
     serial_writeln("[sys] shutdown: cleanup complete");
@@ -257,12 +254,15 @@ static void reboot_machine(void){
     /* Try keyboard controller reset first (0x64 is command port, 0xFE is reset command) */
     outb(0x64, 0xFE);
     io_wait_short();
-    timer_sleep(100);
+    io_wait_short();
     
     /* Try PCI reset register (0xCF9) */
     outb(0xCF9, 0x06);
     io_wait_short();
-    timer_sleep(100);
+    io_wait_short();
+    
+    /* Disable interrupts now that we're done with timed operations */
+    __asm__ __volatile__("cli");
     
     /* Triple fault as last resort (load invalid IDT and cause fault) */
     __asm__ __volatile__(
@@ -279,33 +279,32 @@ static void reboot_machine(void){
 static void poweroff_machine(void){
     system_shutdown_cleanup();
     
-    serial_writeln("[sys] poweroff: ACPI PM");
+    serial_writeln("[sys] poweroff: attempting ACPI PM");
     console_writeln("powering off...");
     
     /* Try ACPI PM1a control register (port 0xB004) */
     outw(0xB004, 0x2000);
     io_wait_short();
-    timer_sleep(50);
+    io_wait_short();
     
     /* Try ACPI alternative (port 0x604) */
     outw(0x604, 0x2000);
     io_wait_short();
-    timer_sleep(50);
+    io_wait_short();
     
     /* Try another ACPI register (port 0x4004) */
     outw(0x4004, 0x3400);
     io_wait_short();
-    timer_sleep(50);
+    io_wait_short();
     
     /* Try APM shutdown command */
     outb(0xF4, 0x00);
     io_wait_short();
-    timer_sleep(50);
+    io_wait_short();
     
-    serial_writeln("[sys] poweroff: ACPI failed, halting CPU");
-    
-    /* If all else fails, halt */
-    for(;;){ __asm__ __volatile__("hlt"); }
+    /* ACPI/APM didn't work - fall back to reboot */
+    serial_writeln("[sys] poweroff: ACPI failed, falling back to reboot");
+    reboot_machine();
 }
 
 #ifdef DISK_MODE_HDD

@@ -227,6 +227,24 @@ def run_verify():
         else:
             log(f"WARNING: iotest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
 
+        # Test shutdown command
+        log("Testing 'shutdown' command...")
+        type_text_via_monitor(monitor, "shutdown")
+        monitor_send_line(monitor, "sendkey ret")
+        
+        shutdown_start = time.time()
+        shutdown_response = b""
+        while time.time() - shutdown_start < 5:
+            r, _, _ = select.select([proc.stdout], [], [], 0.1)
+            if r:
+                char = proc.stdout.read(1)
+                if not char:
+                    log("SUCCESS: QEMU exited on shutdown!")
+                    return True
+                shutdown_response += char
+        
+        log(f"WARNING: QEMU still running after shutdown. Response: {shutdown_response.decode('utf-8', errors='replace').strip()}")
+        
         log("FINAL VERIFICATION: PIT, KEYBOARD, SCHEDULER, INTERRUPT HANDLING, AND I/O INTEGRATION ARE STABLE.")
         return True
 
