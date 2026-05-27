@@ -316,6 +316,27 @@ void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags)
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pd[pd_idx] = frame | 0x07;
+    } else {
+        /* If the PD entry is a 2MiB large page (PS bit set), split it into a PT
+           so we can create 4KiB mappings safely. This avoids treating a 2MiB
+           page entry as a pointer to a page table (which would corrupt memory). */
+        const uint64_t PD_PS = (1ull << 7);
+        if (pd[pd_idx] & PD_PS) {
+            uint64_t old = pd[pd_idx];
+            /* Base address of 2MiB page */
+            uint64_t base2m = old & ~0x1FFFFFULL; /* clear low 21 bits */
+            /* Allocate new page table */
+            paddr_t new_pt = pmm_alloc_frame();
+            memzero((void*)(uintptr_t)new_pt, PAGE_SIZE);
+            uint64_t* pt = (uint64_t*)(uintptr_t)new_pt;
+            /* Build 4KiB entries covering the 2MiB region */
+            uint64_t small_flags = (old & 0xFFFULL) & ~PD_PS; /* preserve P/R/W/U, clear PS */
+            for (int i = 0; i < 512; i++) {
+                pt[i] = (base2m + ((uint64_t)i * PAGE_SIZE)) | small_flags;
+            }
+            /* Replace PD entry with pointer to the new PT */
+            pd[pd_idx] = (uint64_t)new_pt | 0x07; /* Present | R/W | User */
+        }
     }
     
     uint64_t* pt = (uint64_t*)(uintptr_t)(pd[pd_idx] & ~0xFFFULL);
