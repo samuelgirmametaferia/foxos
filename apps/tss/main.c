@@ -140,13 +140,27 @@ int main(void) {
 
     int fbfd = sys_open("/dev/fb0", 0, 0);
     fb = (uint32_t*)sys_mmap(fbfd, (uint64_t)WIDTH * HEIGHT * 4, 0);
-    
-    if (fb == (uint32_t*)-1) {
-        sys_exit(-1);
-    }
-    
     int kbd = sys_open("/dev/kbd", 0, 0);
-    
+
+    int use_fb = 1;
+    if (fb == (uint32_t*)-1) {
+        use_fb = 0;
+        fb = (uint32_t*)0;
+        log_line("[tss] fb mmap failed, falling back to serial console");
+    }
+
+    if (!use_fb) {
+        /* Serial-only fallback: echo keys to stdout so the OS remains usable */
+        while (1) {
+            char c;
+            if (kbd >= 0 && sys_read(kbd, &c, 1) == 1) {
+                sys_write(1, &c, 1);
+            } else {
+                sys_sleep(16);
+            }
+        }
+    }
+
     while (1) {
         draw_rect(0, 0, WIDTH, HEIGHT, COL_BG);
         draw_rect(0, 0, WIDTH, 80, COL_BLACK);
