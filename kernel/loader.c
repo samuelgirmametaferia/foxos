@@ -60,9 +60,11 @@ int sys_exec(const char* path, char* const argv[], char* const envp[]) {
     sys_lseek(fd, ehdr.e_phoff, 0);
     sys_read(fd, phdrs, ehdr.e_phnum * sizeof(Elf64_Phdr));
     
+    /* Load PT_LOAD segments into the canonical user address space (USER_BASE). */
+    const uint64_t USER_BASE = 0x8000000000ULL;
     for (int i = 0; i < ehdr.e_phnum; i++) {
         if (phdrs[i].p_type == PT_LOAD) {
-            uint64_t vaddr = phdrs[i].p_vaddr;
+            uint64_t vaddr = phdrs[i].p_vaddr | USER_BASE;
             uint64_t memsz = phdrs[i].p_memsz;
             uint64_t filesz = phdrs[i].p_filesz;
             uint64_t offset = phdrs[i].p_offset;
@@ -84,7 +86,8 @@ int sys_exec(const char* path, char* const argv[], char* const envp[]) {
     kfree(phdrs);
     sys_close(fd);
     
-    process_spawn_elf(pml4, ehdr.e_entry);
+    /* Spawn the ELF at the canonical user entry (ORed with USER_BASE). */
+    process_spawn_elf(pml4, ehdr.e_entry | USER_BASE);
     
     return 0;
 }
