@@ -428,9 +428,17 @@ static EFI_STATUS load_kernel_elf(void* image, UINTN image_size, uint64_t* entry
         uint64_t total_size = offset + ph->p_memsz;
         UINTN pages = (UINTN)align_up((UINTN)total_size, 4096u) / 4096u;
         uint64_t target = aligned_vaddr;
+        serial_writeln("[uefi] load PT_LOAD");
+        serial_print_hex64((uint64_t)i);
+        serial_print_hex64(target);
+        serial_print_hex64(pages);
 
         EFI_STATUS status = g_bs->AllocatePages(EFI_ALLOCATE_ADDRESS, EFI_MEMORY_TYPE_LOADER_DATA, pages, &target);
-        if (status != EFI_SUCCESS) return status;
+        if (status != EFI_SUCCESS) {
+            serial_writeln("[uefi] AllocatePages failed");
+            serial_print_hex64(status);
+            return status;
+        }
 
         if (ph->p_offset + ph->p_filesz > image_size) return EFI_LOAD_ERROR;
 

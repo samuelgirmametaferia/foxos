@@ -1,13 +1,22 @@
 #include <stdint.h>
 #include "io.h"
 #include "keyboard.h"
+#include "serial.h"
 #include "idt.h"
+#include "../fs/devfs.h"
+#include "../kernel/spinlock.h"
 
 #define KBD_DATA 0x60
 #define KBD_STATUS 0x64
 
-static volatile char buf[128];
-static volatile unsigned head = 0, tail = 0;
+// Multi-buffer keyboard support (broadcast)
+static volatile int shell_buf[1024];
+static volatile unsigned shell_head = 0, shell_tail = 0;
+
+static volatile int user_buf[1024];
+static volatile unsigned user_head = 0, user_tail = 0;
+
+static spinlock_t kbd_lock = SPINLOCK_INIT;
 
 static inline void kbd_wait_input_empty(void) { while (inb(KBD_STATUS) & 0x02) { } }
 static inline int kbd_output_full(void) { return (inb(KBD_STATUS) & 0x01) != 0; }
@@ -17,16 +26,56 @@ static uint8_t shift_down = 0;   // either LSHIFT (0x2A) or RSHIFT (0x36)
 static uint8_t caps_lock = 0;    // toggled by 0x3A
 static uint8_t e0_prefix = 0;    // track 0xE0 extended scancodes
 
-static void buf_put(int c) {
-    unsigned n = (head + 1) & (sizeof(buf)/sizeof(buf[0])-1);
-    if (n != tail) { head = n; buf[head] = c; }
+static int shell_get(void) {
+    __asm__ __volatile__("cli");
+    spinlock_acquire(&kbd_lock);
+    if (shell_head == shell_tail) {
+        spinlock_release(&kbd_lock);
+        __asm__ __volatile__("sti");
+        return -1;
+    }
+    int ch = shell_buf[shell_tail];
+    shell_tail = (shell_tail + 1) & (sizeof(shell_buf)-1);
+    spinlock_release(&kbd_lock);
+    __asm__ __volatile__("sti");
+    serial_write("[kbd] shell get: "); serial_putc((char)ch); serial_writeln("");
+    return ch;
 }
 
-static int buf_get(void) {
-    if (head == tail) return -1;
-    tail = (tail + 1) & (sizeof(buf)-1);
-    return buf[tail];
+static int user_get(void) {
+    __asm__ __volatile__("cli");
+    spinlock_acquire(&kbd_lock);
+    if (user_head == user_tail) {
+        spinlock_release(&kbd_lock);
+        __asm__ __volatile__("sti");
+        return -1;
+    }
+    int ch = user_buf[user_tail];
+    user_tail = (user_tail + 1) & (sizeof(user_buf)-1);
+    spinlock_release(&kbd_lock);
+    __asm__ __volatile__("sti");
+    serial_write("[kbd] user get: "); serial_putc((char)ch); serial_writeln("");
+    return ch;
 }
+
+static int devfs_kbd_read(char* out, uint64_t max, uint64_t* outLen) {
+    if (max == 0) return -1;
+    int ch = user_get();
+    if (ch == -1) {
+        *outLen = 0;
+        return 0;
+    }
+    out[0] = (char)ch;
+    *outLen = 1;
+    return 0;
+}
+
+static devfs_ops_t kbd_ops = {
+    .read = devfs_kbd_read,
+    .write = 0,
+    .ioctl = 0,
+    .mmap = 0
+};
 
 static int is_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 
@@ -52,59 +101,101 @@ static const char shifted_map[128] = {
 static void keyboard_isr(registers_t* regs) {
     (void)regs;
     
-    // Always read to acknowledge the controller
-    uint8_t sc = inb(KBD_DATA);
+    // Process all available scancodes
+    while (kbd_output_full()) {
+        uint8_t sc = inb(KBD_DATA);
 
-    if (sc == 0xE0) { e0_prefix = 1; return; }
+        spinlock_acquire(&kbd_lock);
 
-    if (sc & 0x80) {
-        uint8_t make = sc & 0x7F;
-        if (e0_prefix) { e0_prefix = 0; return; }
-        if (make == 0x2A || make == 0x36) shift_down = 0;
-        return;
+        if (sc == 0xE0) { e0_prefix = 1; spinlock_release(&kbd_lock); continue; }
+
+        if (sc & 0x80) {
+            uint8_t make = sc & 0x7F;
+            if (e0_prefix) { e0_prefix = 0; spinlock_release(&kbd_lock); continue; }
+            if (make == 0x2A || make == 0x36) shift_down = 0;
+            spinlock_release(&kbd_lock);
+            continue;
+        }
+
+        if (e0_prefix) {
+            e0_prefix = 0;
+            if (sc == 0x48) {
+                // Put in shell buffer
+                unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+                if (n_shell != shell_tail) { shell_buf[shell_head] = KBD_KEY_UP; shell_head = n_shell; }
+                // Put in user buffer
+                unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+                if (n_user != user_tail) { user_buf[user_head] = KBD_KEY_UP; user_head = n_user; }
+            }
+            if (sc == 0x50) {
+                // Put in shell buffer
+                unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+                if (n_shell != shell_tail) { shell_buf[shell_head] = KBD_KEY_DOWN; shell_head = n_shell; }
+                // Put in user buffer
+                unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+                if (n_user != user_tail) { user_buf[user_head] = KBD_KEY_DOWN; user_head = n_user; }
+            }
+            spinlock_release(&kbd_lock);
+            continue;
+        }
+
+        if (sc == 0x2A || sc == 0x36) { shift_down = 1; spinlock_release(&kbd_lock); continue; }
+        if (sc == 0x3A) { caps_lock ^= 1; spinlock_release(&kbd_lock); continue; }
+
+        char ch = 0;
+        char base = unshifted_map[sc];
+        if (base != 0) {
+            if (is_alpha(base)) {
+                int upper = (shift_down ^ caps_lock);
+                ch = upper ? (char)(base - 'a' + 'A') : (char)(base | 0);
+            } else {
+                ch = shift_down ? shifted_map[sc] : base;
+            }
+        }
+
+        if (ch) {
+            // Put in shell buffer
+            unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+            if (n_shell != shell_tail) {
+                shell_buf[shell_head] = ch;
+                shell_head = n_shell;
+            }
+
+            // Put in user buffer
+            unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+            if (n_user != user_tail) {
+                user_buf[user_head] = ch;
+                user_head = n_user;
+            }
+        }
+        spinlock_release(&kbd_lock);
     }
-
-    if (e0_prefix) {
-        e0_prefix = 0;
-        if (sc == 0x48) buf_put(KBD_KEY_UP);
-        if (sc == 0x50) buf_put(KBD_KEY_DOWN);
-        return;
-    }
-
-    if (sc == 0x2A || sc == 0x36) { shift_down = 1; return; }
-    if (sc == 0x3A) { caps_lock ^= 1; return; }
-
-    char ch;
-    char base = unshifted_map[sc];
-    if (base == 0) return;
-
-    if (is_alpha(base)) {
-        int upper = (shift_down ^ caps_lock);
-        ch = upper ? (char)(base - 'a' + 'A') : (char)(base | 0);
-    } else {
-        ch = shift_down ? shifted_map[sc] : base;
-    }
-
-    if (ch) buf_put(ch);
 }
 
 void keyboard_init(void) {
-    head = tail = 0;
+    shell_head = shell_tail = 0;
+    user_head = user_tail = 0;
     shift_down = 0; caps_lock = 0; e0_prefix = 0;
+
+    // Flush the controller's buffer
+    while (kbd_output_full()) {
+        (void)inb(KBD_DATA);
+    }
+
     idt_register_handler(0x21, keyboard_isr); // IRQ 1 is mapped to 0x21
+    idt_unmask_irq(1); // Unmask IRQ 1 in PIC
+    devfs_register("kbd", &kbd_ops);
 }
 
 int keyboard_getchar(void) {
     // Non-blocking: returns immediately with -1 if no key
-    return buf_get();
+    return shell_get();
 }
 
 int keyboard_getchar_blocking(void) {
     // Blocking: waits until a key is available
-    // For now, this busywaits since we don't have full I/O blocking yet
-    // In a real system, this would block on an interrupt handler
     while (1) {
-        int ch = buf_get();
+        int ch = shell_get();
         if (ch != -1) return ch;
         // Yield to other threads with HLT
         __asm__ __volatile__("hlt");

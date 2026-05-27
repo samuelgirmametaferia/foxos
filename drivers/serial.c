@@ -81,5 +81,28 @@ void serial_init(void) {
 }
 
 void serial_putc(char c) {
+    while (!serial_is_transmit_empty()) {
+        __asm__ __volatile__("pause");
+    }
     outb(COM1_BASE, (uint8_t)c);
+}
+
+void serial_u64(uint64_t v) {
+    if (v == 0) {
+        serial_putc('0');
+        return;
+    }
+    char tmp[32];
+    int i = 0;
+    while (v > 0) {
+        tmp[i++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (i > 0) {
+        serial_putc(tmp[--i]);
+    }
+}
+
+void serial_u32(uint32_t v) {
+    serial_u64((uint64_t)v);
 }

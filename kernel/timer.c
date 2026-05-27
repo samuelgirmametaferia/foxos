@@ -7,10 +7,15 @@
 static volatile uint64_t timer_ticks = 0;
 static uint32_t timer_freq = 0;
 
-static void timer_callback(registers_t* regs) {
-    (void)regs;
+void timer_tick(void) {
     timer_ticks++;
 }
+
+static void timer_callback(registers_t* regs) {
+    (void)regs;
+    timer_tick();
+}
+
 
 void timer_init(uint32_t frequency) {
     timer_freq = frequency;

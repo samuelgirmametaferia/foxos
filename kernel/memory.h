@@ -16,10 +16,19 @@ void pmm_free_contiguous_pages(paddr_t addr, uint64_t pages);
 uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
 
+/* Page pinning API for DMA */
+void pmm_pin_page(paddr_t paddr);
+void pmm_unpin_page(paddr_t paddr);
+int pmm_is_page_pinned(paddr_t paddr);
+
+
 void* kmalloc(uint32_t size);
 void* kcalloc(uint32_t count, uint32_t size);
 void* krealloc(void* ptr, uint32_t size);
 void kfree(void* ptr);
+
+void memzero(void* ptr, uint32_t len);
+void memcopy(void* dest, const void* src, uint32_t len);
 
 typedef uint32_t uchandle_t;
 
@@ -35,6 +44,7 @@ uint64_t uc_used(uchandle_t h);
 
 /* Expose helpers for paging setup */
 void setup_identity_paging(void);
+void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 uint64_t pmm_phys_end_bytes(void);
 
 /* Debug helpers */

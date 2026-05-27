@@ -1,0 +1,1 @@
+/home/sm/Desktop/foxOS/foxos/kernel_rs/target/x86_64-unknown-linux-gnu/release/libfoxos_rs.a: /home/sm/Desktop/foxOS/foxos/kernel_rs/src/allocator.rs /home/sm/Desktop/foxOS/foxos/kernel_rs/src/gcb.rs /home/sm/Desktop/foxOS/foxos/kernel_rs/src/lib.rs

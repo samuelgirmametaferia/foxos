@@ -1,0 +1,4 @@
+  File "/home/sm/Desktop/foxOS/foxos/scripts/qemu_smoke.sh", line 11
+    qemu-system-x86_64 -m 16G -serial file:"$LOG" -display none \
+                           ^
+SyntaxError: invalid decimal literal

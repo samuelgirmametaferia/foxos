@@ -75,6 +75,27 @@ idt_load:
     lidt [rdi]
     ret
 
+global context_restore
+context_restore:
+    mov rsp, rdi
+    pop rax
+    pop rbx
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rbp
+    pop r8
+    pop r9
+    pop r10
+    pop r11
+    pop r12
+    pop r13
+    pop r14
+    pop r15
+    add rsp, 16
+    iretq
+
 global isr_stub_table
 isr_stub_table:
 %assign i 0

@@ -22,23 +22,10 @@ static idt_entry_t idt[256] __attribute__((aligned(16)));
 static idt_ptr_t idt_p;
 static isr_t interrupt_handlers[256];
 static isr_t reserved_handlers[256];
-static const uint16_t KERNEL_CODE_SELECTOR = 0x38;
+static const uint16_t KERNEL_CODE_SELECTOR = 0x08;
 
 extern void idt_load(void*);
 extern uint64_t isr_stub_table[];
-
-static void serial_u64_dec(uint64_t v) {
-    char buf[24];
-    int n = 0;
-    if (v == 0) { buf[n++] = '0'; buf[n] = 0; }
-    else {
-        char t[24]; int ti = 0;
-        while (v) { t[ti++] = (char)('0' + (v % 10)); v /= 10; }
-        while (ti--) buf[n++] = t[ti];
-        buf[n] = 0;
-    }
-    serial_write(buf);
-}
 
 static void idt_set_gate(uint8_t num, uint64_t base, uint16_t sel, uint8_t flags) {
     idt[num].offset_low = (uint16_t)(base & 0xFFFFu);
@@ -81,9 +68,9 @@ static void page_fault_handler(registers_t* regs) {
     uint64_t cr2 = 0;
     __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
     serial_write("\n[PANIC] Page Fault @ ");
-    serial_u64_dec(cr2);
+    serial_u64(cr2);
     serial_write(" err=");
-    serial_u64_dec(regs->err_code);
+    serial_u64(regs->err_code);
     serial_writeln("");
     for (;;) ;
 }
@@ -115,9 +102,9 @@ void idt_panic_handler(registers_t* regs, const char* message) {
     serial_write("\n[PANIC] ");
     serial_write(message);
     serial_write(" at RIP=");
-    serial_u64_dec(regs->rip);
+    serial_u64(regs->rip);
     serial_write(" RSP context: ");
-    serial_u64_dec((uint64_t)(uintptr_t)regs);
+    serial_u64((uint64_t)(uintptr_t)regs);
     serial_writeln("");
     for(;;);
 }
@@ -141,10 +128,14 @@ void idt_init(void) {
 }
 
 void idt_enable_interrupts(void) {
-    idt_unmask_irq(0);
-    idt_unmask_irq(1);
+    // Rely on IOAPIC/APIC for interrupt routing. 
+    // Legacy PIC unmasking removed to prevent double interrupts.
     __asm__ __volatile__("sti");
-    serial_writeln("[idt] Interrupts enabled (IRQ0 and IRQ1 unmasked)");
+    serial_writeln("[idt] CPU interrupts enabled");
+}
+
+void idt_load_for_ap(void) {
+    idt_load(&idt_p);
 }
 
 void idt_register_handler(uint8_t n, isr_t handler) {
@@ -170,8 +161,13 @@ registers_t* interrupt_handler(registers_t* regs) {
     
     /* Send EOI (End of Interrupt) for PIC IRQs (32-47) */
     if (regs->int_no >= 32 && regs->int_no < 48) {
+        // Send EOI to legacy PIC
         if (regs->int_no >= 40) outb(0xA0, 0x20);
         outb(0x20, 0x20);
+        
+        // Send EOI to Local APIC if present
+        uint32_t* apic_eoi = (uint32_t*)0xFEE000B0;
+        *apic_eoi = 0;
     }
 
     /* Check for registered handler first */
@@ -187,13 +183,13 @@ registers_t* interrupt_handler(registers_t* regs) {
         serial_write("\n[PANIC] Exception: ");
         serial_write(exception_messages[regs->int_no]);
         serial_write(" (Int ");
-        serial_u64_dec(regs->int_no);
+        serial_u64(regs->int_no);
         serial_writeln(")");
         if (regs->int_no == 13) {  /* General Protection Fault */
-            serial_write("[PANIC] GPF rip="); serial_u64_dec(regs->rip);
-            serial_write(" cs="); serial_u64_dec(regs->cs);
-            serial_write(" rflags="); serial_u64_dec(regs->rflags);
-            serial_write(" err="); serial_u64_dec(regs->err_code);
+            serial_write("[PANIC] GPF rip="); serial_u64(regs->rip);
+            serial_write(" cs="); serial_u64(regs->cs);
+            serial_write(" rflags="); serial_u64(regs->rflags);
+            serial_write(" err="); serial_u64(regs->err_code);
             serial_writeln("");
         }
         for (;;) ;
@@ -202,6 +198,15 @@ registers_t* interrupt_handler(registers_t* regs) {
     /* Call scheduler tick for timer interrupt (IRQ 0 = int 32) */
     if (regs->int_no == 32) {
         out = scheduler_tick(regs);
+        extern void timer_tick(void);
+        timer_tick();
+    }
+    
+    /* Call scheduler tick for APIC timer interrupt (Vector 34) */
+    if (regs->int_no == 34) {
+        out = scheduler_tick(regs);
+        extern void timer_tick(void);
+        timer_tick();
     }
 
     return out;

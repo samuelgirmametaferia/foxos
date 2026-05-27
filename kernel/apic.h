@@ -50,6 +50,9 @@
 /* Initialize Local APIC */
 void apic_init(void);
 
+/* Initialize Local APIC Timer */
+void apic_timer_init(uint32_t frequency, uint8_t vector);
+
 /* Get Local APIC ID of current CPU */
 uint32_t apic_get_id(void);
 

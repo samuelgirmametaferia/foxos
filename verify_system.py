@@ -58,6 +58,8 @@ def key_name_for_char(ch):
         return 'spc'
     if ch == '\n':
         return 'ret'
+    if ch == '_':
+        return 'shift-minus'
     if 'a' <= ch <= 'z' or '0' <= ch <= '9':
         return ch
     raise ValueError(f'unsupported key: {ch!r}')
@@ -168,7 +170,7 @@ def run_verify():
             if r:
                 char = proc.stdout.read(1)
                 test_response += char
-                if b"schedtest done" in test_response:
+                if b"scheduler tests done" in test_response:
                     log(f"SUCCESS: scheduler tests passed")
                     break
         else:
@@ -186,7 +188,7 @@ def run_verify():
             if r:
                 char = proc.stdout.read(1)
                 test_response += char
-                if b"inttest done" in test_response:
+                if b"interrupt stability tests done" in test_response:
                     log(f"SUCCESS: interrupt tests passed")
                     break
         else:
@@ -204,7 +206,7 @@ def run_verify():
             if r:
                 char = proc.stdout.read(1)
                 test_response += char
-                if b"cputest done" in test_response:
+                if b"multicore detection test done" in test_response:
                     log(f"SUCCESS: CPU detection tests passed")
                     break
         else:
@@ -221,11 +223,61 @@ def run_verify():
             if r:
                 char = proc.stdout.read(1)
                 test_response += char
-                if b"iotest done" in test_response:
+                if b"I/O integration test done" in test_response:
                     log(f"SUCCESS: I/O integration tests passed")
                     break
         else:
             log(f"WARNING: iotest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+
+        tests_to_run = [
+            ("smptest", b"smptest done", "SMP core boot"),
+            ("dmatest", b"dmatest done", "DMA asynchronous transfers"),
+            ("cachetest", b"cachetest done", "Unified Buffer Cache"),
+            ("concurrencytest", b"concurrencytest done", "Filesystem concurrency"),
+            ("crashrecoverytest", b"crashrecoverytest done", "Journal crash recovery"),
+            ("defragdmatest", b"defragdmatest done", "DMA memory defragmentation"),
+            ("biotest", b"biotest done", "Block I/O Layer"),
+            ("vfstest", b"vfstest done", "VFS Layer"),
+            ("foxfstest", b"foxfstest done", "foxFS extent allocation"),
+            ("foxfs_bench", b"foxfs_bench done", "foxFS benchmark")
+        ]
+
+        for cmd, expected, desc in tests_to_run:
+            log(f"Testing '{cmd}' ({desc})...")
+            type_text_via_monitor(monitor, cmd)
+            monitor_send_line(monitor, "sendkey ret")
+            test_start = time.time()
+            test_response = b""
+            while time.time() - test_start < 5:
+                r, _, _ = select.select([proc.stdout], [], [], 0.1)
+                if r:
+                    char = proc.stdout.read(1)
+                    test_response += char
+                    if expected in test_response:
+                        log(f"SUCCESS: {desc} passed")
+                        break
+            else:
+                log(f"WARNING: {cmd} timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+
+        log("Testing 'tss' (GUI shell launch + keyboard input)...")
+        type_text_via_monitor(monitor, "tss")
+        monitor_send_line(monitor, "sendkey ret")
+
+        tss_start = time.time()
+        tss_response = b""
+        while time.time() - tss_start < 5:
+            r, _, _ = select.select([proc.stdout], [], [], 0.1)
+            if r:
+                char = proc.stdout.read(1)
+                if not char:
+                    break
+                tss_response += char
+                if b"[tss] started" in tss_response:
+                    log("SUCCESS: TSS launched")
+                    break
+        else:
+            log(f"ERROR: TSS did not start. Response: {tss_response.decode('utf-8', errors='replace').strip()}")
+            return False
 
         # Test shutdown command
         log("Testing 'shutdown' command...")

@@ -27,8 +27,15 @@ void scheduler_thread_sleep(int thread_id, uint64_t ms);
 void scheduler_thread_wake(int thread_id);
 thread_state_t scheduler_get_thread_state(int thread_id);
 uint32_t scheduler_get_cpu_id(void);
+void scheduler_ap_start(void);
+void scheduler_yield(void);
 
 /* I/O blocking support */
 int scheduler_current_thread_id(void);
 int scheduler_block_current(void);
 int scheduler_unblock_thread(int thread_id);
+
+int scheduler_create_user(void (*entry)(void), uint64_t user_rsp, uint32_t pid);
+uint32_t scheduler_get_thread_pid(int thread_id);
+void scheduler_set_thread_pid(int thread_id, uint32_t pid);
+void scheduler_set_thread_state_idle(int thread_id);

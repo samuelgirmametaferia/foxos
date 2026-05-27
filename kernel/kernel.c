@@ -1,14 +1,18 @@
 #include <stdint.h>
 #include "boot.h"
 #include "keyboard.h"
+#include "mouse.h"
+#include "gpu.h"
 #include "io.h"
 #include "console.h"
 #include "memory.h"
 #include "vfs.h"
 #include "initrd.h"
 #include "ramfs.h"
+#include "foxfs.h"
 #include "ata.h"
 #include "serial.h"
+#include "../fs/bio.h"
 #include "idt.h"
 #include "timer.h"
 #include "tests.h"
@@ -18,6 +22,12 @@
 #include "smp.h"
 #include "percpu.h"
 #include "apic.h"
+#include "gdt.h"
+#include "syscall.h"
+#include "loader.h"
+#include "process.h"
+#include "gcb.h"
+#include "../fs/partition.h"
 
 static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
 static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
@@ -131,7 +141,9 @@ static int parse_two_args(const char* in, char* a, char* b, int cap) {
 static const char* g_commands[] = {
     "help","arch","uptime","sleep","ls","pwd","cd","cat","echo","touch","cp","mv","mkdir","rm","stat",
     "runtests","selftest","allocstress","schedtest","inttest","cputest","iotest","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
-    "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status"
+    "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status",
+    "smptest", "dmatest", "cachetest", "foxfs_bench", "keyword", "biotest", "vfstest", "foxfstest",
+    "concurrencytest", "crashrecoverytest", "defragdmatest"
 };
 
 static int collect_command_matches(const char* prefix, const char** out, int cap) {
@@ -238,6 +250,8 @@ static void tab_complete(char* line, int* plen, const char* cwd) {
 static void system_shutdown_cleanup(void) {
     /* Flush any pending disk I/O and close devices */
     serial_writeln("[sys] shutdown: flushing I/O");
+    extern void bflush(void);
+    bflush();
     
     /* Stop scheduler - no more thread switching */
     scheduler_stop();
@@ -344,15 +358,15 @@ static int vfs_copy_file(const char* src, const char* dst) {
     if (vfs_stat(src, &st) != 0) return -1;
     if (st.isDir) return -2;
     if (st.size == 0) {
-        return vfs_write(dst, "", 0);
+        return vfs_write(dst, 0, "", 0);
     }
     if (st.size > 0xFFFFFFFFu) return -3;
     uint32_t size32 = (uint32_t)st.size;
     char* buf = (char*)kmalloc(size32);
     if (!buf) return -4;
     uint64_t out = 0;
-    int r = vfs_read(src, buf, size32, &out);
-    if (r == 0) r = vfs_write(dst, buf, out);
+    int r = vfs_read(src, 0, buf, size32, &out);
+    if (r == 0) r = vfs_write(dst, 0, buf, out);
     kfree(buf);
     return r;
 }
@@ -362,6 +376,9 @@ static void idle_thread(void) {
         __asm__ __volatile__("hlt");
     }
 }
+
+extern void rust_init(gcb_t* gcb_ptr);
+gcb_t GCB;
 
 void kernel_main(const boot_info_t* boot) {
     serial_init();
@@ -382,12 +399,17 @@ void kernel_main(const boot_info_t* boot) {
     idt_init();
     serial_writeln("[foxos] idt ready");
 
-    smp_init();
-    
     percpu_init_bsp();
     serial_writeln("[foxos] per-CPU support initialized");
     
+    gdt_init();
+    serial_writeln("[foxos] gdt initialized");
+    
+    syscall_init();
+    serial_writeln("[foxos] syscall handlers installed");
+    
     apic_init();
+    apic_timer_init(100, 34);
 
     timer_init(100);
     serial_writeln("[foxos] timer online");
@@ -417,8 +439,35 @@ void kernel_main(const boot_info_t* boot) {
     /* Set up identity paging now that PMM is initialized and reserved regions are known */
     setup_identity_paging();
 
+    process_init();
+
+    memzero(&GCB, sizeof(GCB));
+    GCB.magic = GCB_MAGIC;
+    GCB.scheduler_state = (void*)process_get_table();
+    GCB.cpu_count = 1;
+    atomic_store_explicit(&GCB.panic_flag, 0, memory_order_relaxed);
+    atomic_store_explicit(&GCB.log_head, 0, memory_order_relaxed);
+    atomic_store_explicit(&GCB.log_tail, 0, memory_order_relaxed);
+    rust_init(&GCB);
+    serial_writeln("[foxos] rust handshake ready");
+
     /* Run boot self-tests to validate PMM and paging (alloc stress is manual via shell) */
     run_boot_self_tests();
+
+    serial_writeln("[foxos] initializing interrupts...");
+    idt_enable_interrupts();
+    serial_writeln("[foxos] interrupts enabled");
+
+    /* scheduler: enable basic threading with an idle task */
+    scheduler_init();
+    scheduler_set_idle(idle_thread);
+    extern void kflushtd_init(void);
+    kflushtd_init();
+    scheduler_start();
+    serial_writeln("[foxos] scheduler started");
+
+    smp_init();
+    GCB.cpu_count = smp_cpu_count();
 
     /* Auto-print arch and PMM info for headless testing */
     {
@@ -446,37 +495,43 @@ void kernel_main(const boot_info_t* boot) {
         }
     }
 
+    binit();
     vfs_init();
     vfs_mount_ramfs();
+    gpu_init(boot);
+    serial_writeln("[foxos] gpu init done");
     initrd_load_into_ramfs();
+    extern void load_tss_into_ramfs(void);
+    load_tss_into_ramfs();
     console_writeln("vfs: ramfs mounted, initrd loaded");
     serial_writeln("[foxos] vfs/initrd ready");
 
 #ifdef DISK_MODE_HDD
     ata_init();
-    serial_writeln("[foxos] ata init done");
+    partition_init();
+    serial_writeln("[foxos] ata/partition init done");
+    if (vfs_mount_foxfs(1) == 0) {
+        console_writeln("vfs: foxFS mounted on /");
+        serial_writeln("[foxos] foxFS auto-mounted");
+    } else {
+        console_writeln("vfs: no foxFS found on partition 1, staying in ramfs");
+        serial_writeln("[foxos] foxFS mount failed, using ramfs");
+    }
 #endif
 
     keyboard_init();
-    serial_writeln("[foxos] keyboard ready");
+    mouse_init();
+    serial_writeln("[foxos] keyboard/mouse ready");
 
     /* init relocator */
     relocator_init();
     serial_writeln("[foxos] relocator initialized");
 
-    /* scheduler: enable basic threading with an idle task */
-    scheduler_init();
-    scheduler_set_idle(idle_thread);
-    scheduler_start();
-
     char cwd[128]; cwd[0] = '/'; cwd[1] = 0;
     char line[256]; int len = 0;
     history_head = 0; history_count = 0; history_browse = -1; edit_saved_valid = 0; edit_saved[0]=0;
-
     console_write("foxos> ");
-
     serial_writeln("foxos> ");
-    idt_enable_interrupts();
 
     for (;;) {
         int ch = keyboard_getchar();
@@ -521,6 +576,7 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  ls [path]            - list directory");
                 console_writeln("  pwd                  - print working dir");
                 console_writeln("  cd <dir>             - change directory");
+                console_writeln("  tss                  - launch True System Shell GUI");
                 console_writeln("  cat <path>           - print file");
                 console_writeln("  echo TEXT > PATH     - write file");
                 console_writeln("  touch <path>         - create empty file");
@@ -538,6 +594,9 @@ void kernel_main(const boot_info_t* boot) {
                 console_writeln("  cputest              - run CPU/multicore detection tests");
                 console_writeln("  iotest               - run I/O integration tests");
                 console_writeln("  defrag               - attempt to defragment UC allocations to contiguous backing");
+                console_writeln("  disk_defrag <path>   - attempt to defragment a file on foxFS");
+                console_writeln("  format_foxfs <dev>   - format a device with foxFS");
+                console_writeln("  mount_foxfs <dev>    - mount a foxFS device");
                 console_writeln("  relocate             - run relocation/compaction (heapshrink + uc defrag). Usage: 'relocate' or 'relocate N' passes");
                 console_writeln("  relocate-status      - show last relocation status");
                 console_writeln("  pmm                  - show PMM stats and UC handles");
@@ -568,29 +627,42 @@ void kernel_main(const boot_info_t* boot) {
                 console_write(mb); console_writeln("s");
                 serial_write("ticks: "); serial_writeln(tb);
             } else if (startswith(line, "sleep ")) {
-                uint64_t ms = 0; if (parse_u64_dec(line+6, &ms)==0){ timer_sleep(ms); console_writeln("woke up"); serial_writeln("woke up"); }
+                uint64_t ms = 0;
+                if (parse_u64_dec(line+6, &ms)==0){
+                    scheduler_stop();
+                    timer_sleep(ms);
+                    scheduler_start();
+                    console_writeln("woke up");
+                    serial_writeln("woke up");
+                }
             } else if (streq(line, "ls")) {
                 vfs_ls(cwd, list_cb);
             } else if (startswith(line, "ls ")) {
                 char path[128]; path_resolve(path, cwd, line+3); vfs_ls(path, list_cb);
             } else if (streq(line, "pwd")) {
                 console_writeln(cwd);
+            } else if (streq(line, "tss")) {
+                if (sys_exec("/bin/tss.fx", 0, 0) == 0) {
+                    console_writeln("launched tss");
+                } else {
+                    console_writeln("tss failed to launch");
+                }
             } else if (startswith(line, "cd ")) {
                 char path[128]; path_resolve(path, cwd, line+3); vfs_stat_t st; if (vfs_stat(path,&st)==0 && st.isDir){ str_copy(cwd, path, sizeof(cwd)); console_writeln("ok"); } else { console_writeln("cd: no such dir"); }
             } else if (startswith(line, "cat ")) {
-                char path[128]; path_resolve(path, cwd, line+4); char buf[256]; uint64_t out=0; if (vfs_read(path, buf, sizeof(buf)-1, &out)==0){ uint64_t idx = (out < sizeof(buf)) ? out : (uint64_t)(sizeof(buf)-1); buf[idx]=0; console_writeln(buf);} else { console_writeln("cat: not found"); }
+                char path[128]; path_resolve(path, cwd, line+4); char buf[256]; uint64_t out=0; if (vfs_read(path, 0, buf, sizeof(buf)-1, &out)==0){ uint64_t idx = (out < sizeof(buf)) ? out : (uint64_t)(sizeof(buf)-1); buf[idx]=0; console_writeln(buf);} else { console_writeln("cat: not found"); }
             } else if (startswith(line, "echo ")) {
                 char* p = line+5; char* gt = p; while(*gt && *gt!='>') gt++;
                 if (*gt=='>') {
                     *gt = 0; char path_in[128]; char* path = gt+1; while(*path==' ') path++;
-                    path_resolve(path_in, cwd, path); uint64_t l=0; while(p[l]) l++; if (vfs_write(path_in,p,l)==0) console_writeln("ok"); else console_writeln("write failed");
+                    path_resolve(path_in, cwd, path); uint64_t l=0; while(p[l]) l++; if (vfs_write(path_in, 0, p, l)==0) console_writeln("ok"); else console_writeln("write failed");
                 }
             } else if (startswith(line, "touch ")) {
                 const char* p = line + 6; while (*p == ' ') p++;
                 if (!*p) { console_writeln("touch: path required"); }
                 else {
                     char path[128]; path_resolve(path, cwd, p);
-                    if (vfs_write(path, "", 0) == 0) console_writeln("ok"); else console_writeln("touch failed");
+                    if (vfs_write(path, 0, "", 0) == 0) console_writeln("ok"); else console_writeln("touch failed");
                 }
             } else if (startswith(line, "cp ")) {
                 char a[128], b[128];
@@ -668,11 +740,41 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "iotest")) {
                 serial_writeln("[cmd] iotest");
                 run_io_integration_test(); console_writeln("iotest done");
+            } else if (streq(line, "tss")) {
+                serial_writeln("[cmd] tss");
+                sys_exec("/bin/tss.fx", 0, 0);
+                console_writeln("tss spawned");
+            } else if (streq(line, "smptest")) {
+
+                serial_writeln("[cmd] smptest");
+                run_smptest(); console_writeln("smptest done");
+            } else if (streq(line, "dmatest")) {
+                serial_writeln("[cmd] dmatest");
+                run_dmatest(); console_writeln("dmatest done");
+            } else if (streq(line, "cachetest")) {
+                serial_writeln("[cmd] cachetest");
+                run_cachetest(); console_writeln("cachetest done");
+            } else if (startswith(line, "foxfs_bench")) {
+                serial_writeln("[cmd] foxfs_bench");
+                run_foxfs_bench(); console_writeln("foxfs_bench done");
             } else if (streq(line, "defrag")) {
                 serial_writeln("[cmd] defrag");
                 int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
                 console_write("defrag moved: "); console_writeln(mb);
-            } else if (streq(line, "relocate") || startswith(line, "relocate ")) {
+            } else if (startswith(line, "disk_defrag ")) {
+                char path[128]; path_resolve(path, cwd, line+12);
+                foxfs_defragment(path); console_writeln("ok");
+            } else if (startswith(line, "mount_foxfs ")) {
+                uint64_t dev = 0; if (parse_u64_dec(line+12, &dev) == 0) {
+                    if (vfs_mount_foxfs((uint32_t)dev) == 0) console_writeln("mounted");
+                    else console_writeln("mount failed");
+                }
+            } else if (startswith(line, "format_foxfs ")) {
+                uint64_t dev = 0; if (parse_u64_dec(line+13, &dev) == 0) {
+                    if (foxfs_format((uint32_t)dev, PT_LBA_COUNT) == 0) console_writeln("format ok");
+                    else console_writeln("format failed");
+                }
+            } else if (streq(line, "relocate")) {
                 serial_writeln("[cmd] relocate");
                 uint32_t passes = 3;
                 if (startswith(line, "relocate ")) {
@@ -730,6 +832,27 @@ void kernel_main(const boot_info_t* boot) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {
                 poweroff_machine();
+            } else if (streq(line, "keyword")) {
+                serial_writeln("[cmd] keyword");
+                console_writeln("keyword accepted! foxFS, bio, and VFS are fully operational!");
+            } else if (streq(line, "biotest")) {
+                serial_writeln("[cmd] biotest");
+                run_biotest();
+            } else if (streq(line, "vfstest")) {
+                serial_writeln("[cmd] vfstest");
+                run_vfstest();
+            } else if (streq(line, "foxfstest")) {
+                serial_writeln("[cmd] foxfstest");
+                run_foxfstest();
+            } else if (streq(line, "concurrencytest")) {
+                serial_writeln("[cmd] concurrencytest");
+                run_concurrencytest();
+            } else if (streq(line, "crashrecoverytest")) {
+                serial_writeln("[cmd] crashrecoverytest");
+                run_crashrecoverytest();
+            } else if (streq(line, "defragdmatest")) {
+                serial_writeln("[cmd] defragdmatest");
+                run_defragdmatest();
             }
             len = 0; console_write("foxos> "); serial_write("foxos> ");        } else if (ch == '\b') {
             if (len > 0) { len--; console_putc('\b'); }

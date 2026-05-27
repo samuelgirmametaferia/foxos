@@ -1,0 +1,9 @@
+[build]
+target = "x86_64-unknown-none"
+rustflags = [
+    "-C", "linker-plugin-lto",
+    "-C", "no-redzone",
+    "-C", "code-model=kernel",
+    "-C", "opt-level=3",
+    "-C", "panic=abort",
+]

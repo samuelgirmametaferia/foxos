@@ -13,8 +13,11 @@ void percpu_init_bsp(void) {
     /* Use pre-allocated BSP per-CPU area */
     percpu_t* area = &percpu_areas_static[0];
     
+    area->self = area;
     area->cpu_id = 0;
     area->apic_id = 0;
+    area->kernel_stack = 0;
+    area->scratch_rsp = 0;
     area->local_tss = 0;
     area->idle_thread = 0;
     area->context_switches = 0;
@@ -46,8 +49,11 @@ void percpu_init_ap(uint32_t cpu_id, uint32_t apic_id) {
     
     percpu_t* area = &percpu_areas_static[cpu_id];
     
+    area->self = area;
     area->cpu_id = cpu_id;
     area->apic_id = apic_id;
+    area->kernel_stack = 0;
+    area->scratch_rsp = 0;
     area->local_tss = 0;
     area->idle_thread = 0;
     area->context_switches = 0;

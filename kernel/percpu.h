@@ -7,12 +7,15 @@
  */
 
 typedef struct {
-    uint32_t cpu_id;
-    uint32_t apic_id;
-    void* local_tss;
-    void* idle_thread;
-    uint64_t context_switches;
-    uint64_t interrupts_handled;
+    void* self;                  // Offset 0
+    uint32_t cpu_id;             // Offset 8
+    uint32_t apic_id;            // Offset 12
+    uint64_t kernel_stack;       // Offset 16
+    uint64_t scratch_rsp;        // Offset 24
+    void* local_tss;             // Offset 32
+    void* idle_thread;           // Offset 40
+    uint64_t context_switches;   // Offset 48
+    uint64_t interrupts_handled; // Offset 56
 } __attribute__((packed)) percpu_t;
 
 /* Get current CPU's per-CPU structure */

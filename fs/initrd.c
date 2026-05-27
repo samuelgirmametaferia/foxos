@@ -18,17 +18,19 @@ void initrd_load_into_ramfs(void){
             if (eq<nl) {
                 char spath[128]; unsigned i=0; while(path<eq && i<sizeof(spath)-1) spath[i++]=*path++; spath[i]=0;
                 const char* data = eq+1; uint64_t len = (uint64_t)(nl - data);
-                vfs_write(spath, data, len);
+                vfs_write(spath, 0, data, len);
             }
         }
         p = nl + 1;
     }
     // Demo SAM file (same content as our tiny HTML subset)
-    vfs_write("/examples/demo.sam",
+    const char* demo_sam = 
         "<h1 style=\"color: lightcyan; background: 1\">Welcome to foxos</h1>\n"
         "<p style=\"color: lightgreen\">This is a tiny HTML renderer demo in the console.</p>\n"
         "<p>Plain <span style=\"color: red\">red</span> and <span style=\"color: 14\">yellow</span> text.</p>\n"
         "<br>\n"
-        "<script>\nconsole.log('hello from js!')\nalert('alerts look like normal lines')\n</script>\n",
-        0 /* length 0 means compute from string in our vfs */);
+        "<script>\nconsole.log('hello from js!')\nalert('alerts look like normal lines')\n</script>\n";
+    
+    uint64_t demo_len = 0; while(demo_sam[demo_len]) demo_len++;
+    vfs_write("/examples/demo.sam", 0, demo_sam, demo_len);
 }
