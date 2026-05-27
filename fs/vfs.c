@@ -251,6 +251,23 @@ int vfs_mount_foxfs(uint32_t dev_id) {
     return -1;
 }
 
+int vfs_mount_fat32(uint32_t dev_id) {
+    (void)dev_id;
+#ifdef PT_LBA_START
+    if (fat32_init(PT_LBA_START) == 0) {
+        g_vfs_mode = VFS_MODE_FAT32;
+        return 0;
+    }
+#else
+    /* If PT_LBA_START is not defined at compile time, try default offset 0 */
+    if (fat32_init(0) == 0) {
+        g_vfs_mode = VFS_MODE_FAT32;
+        return 0;
+    }
+#endif
+    return -1;
+}
+
 int vfs_mkdir(const char* path) {
     if (g_vfs_mode == VFS_MODE_FOXFS) return foxfs_mkdir(path);
     return ramfs_mkdir(path) ? 0 : -1;

@@ -513,9 +513,12 @@ void kernel_main(const boot_info_t* boot) {
     if (vfs_mount_foxfs(1) == 0) {
         console_writeln("vfs: foxFS mounted on /");
         serial_writeln("[foxos] foxFS auto-mounted");
+    } else if (vfs_mount_fat32(1) == 0) {
+        console_writeln("vfs: FAT32 mounted on /");
+        serial_writeln("[foxos] FAT32 auto-mounted");
     } else {
-        console_writeln("vfs: no foxFS found on partition 1, staying in ramfs");
-        serial_writeln("[foxos] foxFS mount failed, using ramfs");
+        console_writeln("vfs: no foxFS or FAT32 found on partition 1, staying in ramfs");
+        serial_writeln("[foxos] foxFS/FAT32 mount failed, using ramfs");
     }
 #endif
 
