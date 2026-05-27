@@ -120,8 +120,8 @@ void apic_init(void) {
     
     /* Initialize IOAPIC for legacy IRQs */
     for (int i = 0; i < 24; i++) {
-        // Mask all by default: set bit 16
-        uint32_t low = 0x10000 | (32 + i);
+        // Unmask and set vector (removed 0x10000 mask bit)
+        uint32_t low = (32 + i);
         volatile uint32_t* base = (uint32_t*)0xFEC00000;
         base[0] = 0x10 + i * 2; base[4] = low;
         base[0] = 0x10 + i * 2 + 1; base[4] = 0;
