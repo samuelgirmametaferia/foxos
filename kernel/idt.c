@@ -72,6 +72,43 @@ static void page_fault_handler(registers_t* regs) {
     serial_write(" err=");
     serial_u64(regs->err_code);
     serial_writeln("");
+
+    uint64_t cr3 = 0;
+    __asm__ __volatile__("mov %%cr3, %0" : "=r"(cr3));
+    serial_write("[PF] CR3="); serial_u64(cr3); serial_writeln("");
+
+    uint64_t pml4_idx = (cr2 >> 39) & 0x1FF;
+    uint64_t pdpt_idx = (cr2 >> 30) & 0x1FF;
+    uint64_t pd_idx   = (cr2 >> 21) & 0x1FF;
+    uint64_t pt_idx   = (cr2 >> 12) & 0x1FF;
+
+    serial_write("[PF] idx pml4="); serial_u64(pml4_idx);
+    serial_write(" pdpt="); serial_u64(pdpt_idx);
+    serial_write(" pd="); serial_u64(pd_idx);
+    serial_write(" pt="); serial_u64(pt_idx);
+    serial_writeln("");
+
+    uint64_t* pml4 = (uint64_t*)(uintptr_t)cr3;
+    uint64_t pml4_entry = pml4[pml4_idx];
+    serial_write("[PF] pml4_entry="); serial_u64(pml4_entry); serial_writeln("");
+    if (pml4_entry & 1) {
+        uint64_t* pdpt = (uint64_t*)(uintptr_t)(pml4_entry & ~0xFFFULL);
+        uint64_t pdpt_entry = pdpt[pdpt_idx];
+        serial_write("[PF] pdpt_entry="); serial_u64(pdpt_entry); serial_writeln("");
+        if (pdpt_entry & 1) {
+            uint64_t* pd = (uint64_t*)(uintptr_t)(pdpt_entry & ~0xFFFULL);
+            uint64_t pd_entry = pd[pd_idx];
+            serial_write("[PF] pd_entry="); serial_u64(pd_entry); serial_writeln("");
+            if (pd_entry & (1ull << 7)) {
+                serial_writeln("[PF] pd_entry is large (2MiB)");
+            } else if (pd_entry & 1) {
+                uint64_t* pt = (uint64_t*)(uintptr_t)(pd_entry & ~0xFFFULL);
+                uint64_t pt_entry = pt[pt_idx];
+                serial_write("[PF] pt_entry="); serial_u64(pt_entry); serial_writeln("");
+            }
+        }
+    }
+
     for (;;) ;
 }
 

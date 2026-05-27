@@ -297,11 +297,19 @@ void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags)
     uint64_t pdpt_idx = (vaddr >> 30) & 0x1FF;
     uint64_t pd_idx   = (vaddr >> 21) & 0x1FF;
     uint64_t pt_idx   = (vaddr >> 12) & 0x1FF;
+
+    /* Tracing: log requested mapping */
+    serial_write("[vmm] map request: pml4="); serial_u64(pml4_phys);
+    serial_write(" vaddr="); serial_u64(vaddr);
+    serial_write(" paddr="); serial_u64(paddr);
+    serial_write(" flags="); serial_u64(flags);
+    serial_writeln("");
     
     if (!(pml4[pml4_idx] & 0x01)) {
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pml4[pml4_idx] = frame | 0x07; // P | R/W | U
+        serial_write("[vmm] allocated pml4 frame="); serial_u64(frame); serial_writeln("");
     }
     
     uint64_t* pdpt = (uint64_t*)(uintptr_t)(pml4[pml4_idx] & ~0xFFFULL);
@@ -309,6 +317,7 @@ void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags)
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pdpt[pdpt_idx] = frame | 0x07;
+        serial_write("[vmm] allocated pdpt frame="); serial_u64(frame); serial_writeln("");
     }
     
     uint64_t* pd = (uint64_t*)(uintptr_t)(pdpt[pdpt_idx] & ~0xFFFULL);
@@ -316,6 +325,7 @@ void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags)
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pd[pd_idx] = frame | 0x07;
+        serial_write("[vmm] allocated pd frame="); serial_u64(frame); serial_writeln("");
     } else {
         /* If the PD entry is a 2MiB large page (PS bit set), split it into a PT
            so we can create 4KiB mappings safely. This avoids treating a 2MiB
@@ -336,11 +346,13 @@ void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags)
             }
             /* Replace PD entry with pointer to the new PT */
             pd[pd_idx] = (uint64_t)new_pt | 0x07; /* Present | R/W | User */
+            serial_write("[vmm] split 2MiB PD entry -> new_pt="); serial_u64(new_pt); serial_writeln("");
         }
     }
     
     uint64_t* pt = (uint64_t*)(uintptr_t)(pd[pd_idx] & ~0xFFFULL);
     pt[pt_idx] = paddr | flags;
+    serial_write("[vmm] set pte pt_idx="); serial_u64(pt_idx); serial_write(" entry="); serial_u64(pt[pt_idx]); serial_writeln("");
 }
 
 void mem_init(const boot_info_t* boot) {
