@@ -506,6 +506,15 @@ void kernel_main(const boot_info_t* boot) {
     console_writeln("vfs: ramfs mounted, initrd loaded");
     serial_writeln("[foxos] vfs/initrd ready");
 
+    /* Auto-launch TSS for headless verification/testing */
+    serial_writeln("[auto] attempting to exec /bin/tss.fx...");
+    int _tss_r = sys_exec("/bin/tss.fx", 0, 0);
+    if (_tss_r == 0) {
+        serial_writeln("[auto] TSS spawned");
+    } else {
+        serial_write("[auto] TSS spawn failed: "); serial_u64((uint64_t)_tss_r); serial_writeln("");
+    }
+
 #ifdef DISK_MODE_HDD
     ata_init();
     partition_init();
