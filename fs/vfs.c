@@ -9,6 +9,7 @@
 #include "../kernel/memory.h"
 #include "../kernel/process.h"
 #include "../kernel/spinlock.h"
+#include "../drivers/serial.h"
 
 static int is_devfs_path(const char* path);
 
@@ -209,17 +210,31 @@ void* sys_mmap(int fd, uint64_t length, uint64_t offset) {
     
     if (paddr != (void*)-1) {
         // Map physical address to virtual address in user space
-        // We'll use the same virtual address as the physical address for simplicity,
-        // but it must be mapped in the process's page directory.
         process_t* proc = process_get_current();
         if (proc->is_user) {
             uint64_t vaddr = (uint64_t)paddr | 0x8000000000ULL;
+
+            /* Debug: log mmap attempt */
+            serial_write("[vfs] sys_mmap: dev=");
+            serial_write(fd_table[fd].path + 5);
+            serial_write(" paddr="); serial_u64((uint64_t)paddr);
+            serial_write(" vaddr="); serial_u64(vaddr);
+            serial_write(" len="); serial_u64(length);
+            serial_writeln("");
+
             for (uint64_t off = 0; off < length; off += PAGE_SIZE) {
                 vmm_map(proc->page_directory, vaddr + off, (uint64_t)paddr + off, 0x07); // P | R/W | U
             }
+
+            serial_writeln("[vfs] sys_mmap: mapped OK");
             return (void*)vaddr;
+        } else {
+            /* Kernel mapping: just return physical pointer */
+            return paddr;
         }
     }
+
+    serial_writeln("[vfs] sys_mmap: failed");
     return (void*)-1;
 }
 
