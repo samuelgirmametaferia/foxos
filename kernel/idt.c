@@ -2,6 +2,8 @@
 #include "io.h"
 #include "serial.h"
 #include "sched.h"
+#include "console.h"
+#include "../common/lib.h"
 
 typedef struct {
     uint16_t offset_low;
@@ -64,53 +66,6 @@ void idt_unmask_irq(uint8_t irq) {
     outb(port, mask);
 }
 
-static void page_fault_handler(registers_t* regs) {
-    uint64_t cr2 = 0;
-    __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
-    serial_write("\n[PANIC] Page Fault @ ");
-    serial_u64(cr2);
-    serial_write(" err=");
-    serial_u64(regs->err_code);
-    serial_writeln("");
-
-    uint64_t cr3 = 0;
-    __asm__ __volatile__("mov %%cr3, %0" : "=r"(cr3));
-    serial_write("[PF] CR3="); serial_u64(cr3); serial_writeln("");
-
-    uint64_t pml4_idx = (cr2 >> 39) & 0x1FF;
-    uint64_t pdpt_idx = (cr2 >> 30) & 0x1FF;
-    uint64_t pd_idx   = (cr2 >> 21) & 0x1FF;
-    uint64_t pt_idx   = (cr2 >> 12) & 0x1FF;
-
-    serial_write("[PF] idx pml4="); serial_u64(pml4_idx);
-    serial_write(" pdpt="); serial_u64(pdpt_idx);
-    serial_write(" pd="); serial_u64(pd_idx);
-    serial_write(" pt="); serial_u64(pt_idx);
-    serial_writeln("");
-
-    uint64_t* pml4 = (uint64_t*)(uintptr_t)cr3;
-    uint64_t pml4_entry = pml4[pml4_idx];
-    serial_write("[PF] pml4_entry="); serial_u64(pml4_entry); serial_writeln("");
-    if (pml4_entry & 1) {
-        uint64_t* pdpt = (uint64_t*)(uintptr_t)(pml4_entry & ~0xFFFULL);
-        uint64_t pdpt_entry = pdpt[pdpt_idx];
-        serial_write("[PF] pdpt_entry="); serial_u64(pdpt_entry); serial_writeln("");
-        if (pdpt_entry & 1) {
-            uint64_t* pd = (uint64_t*)(uintptr_t)(pdpt_entry & ~0xFFFULL);
-            uint64_t pd_entry = pd[pd_idx];
-            serial_write("[PF] pd_entry="); serial_u64(pd_entry); serial_writeln("");
-            if (pd_entry & (1ull << 7)) {
-                serial_writeln("[PF] pd_entry is large (2MiB)");
-            } else if (pd_entry & 1) {
-                uint64_t* pt = (uint64_t*)(uintptr_t)(pd_entry & ~0xFFFULL);
-                uint64_t pt_entry = pt[pt_idx];
-                serial_write("[PF] pt_entry="); serial_u64(pt_entry); serial_writeln("");
-            }
-        }
-    }
-
-    for (;;) ;
-}
 
 int idt_is_exception(uint8_t int_no) {
     return int_no < 32;
@@ -136,14 +91,28 @@ const char* idt_get_exception_name(uint8_t int_no) {
 }
 
 void idt_panic_handler(registers_t* regs, const char* message) {
-    serial_write("\n[PANIC] ");
-    serial_write(message);
-    serial_write(" at RIP=");
-    serial_u64(regs->rip);
-    serial_write(" RSP context: ");
-    serial_u64((uint64_t)(uintptr_t)regs);
-    serial_writeln("");
+    extern void rust_exception_handler(registers_t* regs, const char* message);
+    rust_exception_handler(regs, message);
     for(;;);
+}
+
+static void double_fault_handler(registers_t* regs) {
+    idt_panic_handler(regs, "DOUBLE FAULT");
+}
+
+static void gpf_handler(registers_t* regs) {
+    idt_panic_handler(regs, "GENERAL PROTECTION FAULT");
+}
+
+static void page_fault_handler(registers_t* regs) {
+    uint64_t cr2 = 0;
+    __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
+    extern void serial_write_panic(const char* s);
+    serial_write_panic("\n[PANIC] Page Fault @ ");
+    char ad_buf[32]; u64_to_hex(cr2, ad_buf);
+    serial_write_panic(ad_buf);
+    serial_write_panic("\n");
+    idt_panic_handler(regs, "PAGE FAULT");
 }
 
 void idt_init(void) {
@@ -160,6 +129,8 @@ void idt_init(void) {
     idt_p.base = (uint64_t)(uintptr_t)&idt;
     idt_load(&idt_p);
 
+    idt_register_handler(8, double_fault_handler);
+    idt_register_handler(13, gpf_handler);
     idt_register_handler(14, page_fault_handler);
     serial_writeln("[idt] IDT initialized successfully");
 }
@@ -193,15 +164,20 @@ static const char* exception_messages[] = {
     "Reserved", "Reserved", "Reserved", "Reserved", "Security Exception", "Reserved"
 };
 
+void pic_send_eoi(uint8_t irq) {
+    if (irq >= 8) outb(0xA0, 0x20);
+    outb(0x20, 0x20);
+}
+
 registers_t* interrupt_handler(registers_t* regs) {
     registers_t* out = regs;
-    
+
     /* Send EOI (End of Interrupt) for PIC IRQs (32-47) */
     if (regs->int_no >= 32 && regs->int_no < 48) {
         // Send EOI to legacy PIC
         if (regs->int_no >= 40) outb(0xA0, 0x20);
         outb(0x20, 0x20);
-        
+
         // Send EOI to Local APIC if present
         uint32_t* apic_eoi = (uint32_t*)0xFEE000B0;
         *apic_eoi = 0;
@@ -210,40 +186,58 @@ registers_t* interrupt_handler(registers_t* regs) {
     /* Check for registered handler first */
     if (interrupt_handlers[regs->int_no] != 0) {
         interrupt_handlers[regs->int_no](regs);
-    } 
+    }
     /* Check for reserved handler */
     else if (regs->int_no < 32 && reserved_handlers[regs->int_no] != 0) {
         reserved_handlers[regs->int_no](regs);
     }
     /* Handle unhandled exceptions */
     else if (regs->int_no < 32) {
+        extern void rust_exception_handler(registers_t* regs, const char* message);
+        rust_exception_handler(regs, exception_messages[regs->int_no]);
+
         serial_write("\n[PANIC] Exception: ");
         serial_write(exception_messages[regs->int_no]);
         serial_write(" (Int ");
         serial_u64(regs->int_no);
         serial_writeln(")");
+
+        console_set_color(15, 4); // White on Red
+        console_write("\n!!! KERNEL PANIC: ");
+        console_write(exception_messages[regs->int_no]);
+        console_write(" !!!\n");
+
         if (regs->int_no == 13) {  /* General Protection Fault */
             serial_write("[PANIC] GPF rip="); serial_u64(regs->rip);
             serial_write(" cs="); serial_u64(regs->cs);
             serial_write(" rflags="); serial_u64(regs->rflags);
             serial_write(" err="); serial_u64(regs->err_code);
             serial_writeln("");
+
+            console_write("GPF at RIP: 0x");
+            char rip_buf[32]; u64_to_hex(regs->rip, rip_buf);
+            console_writeln(rip_buf);
         }
+
+        if (regs->int_no == 14) { /* Page Fault (if not handled by registered handler) */
+             uint64_t cr2 = 0;
+             __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
+             console_write("PF at ADDR: 0x");
+             char ad_buf[32]; u64_to_hex(cr2, ad_buf);
+             console_writeln(ad_buf);
+        }
+
         for (;;) ;
     }
 
     /* Call scheduler tick for timer interrupt (IRQ 0 = int 32) */
     if (regs->int_no == 32) {
         out = scheduler_tick(regs);
-        extern void timer_tick(void);
-        timer_tick();
     }
     
     /* Call scheduler tick for APIC timer interrupt (Vector 34) */
     if (regs->int_no == 34) {
         out = scheduler_tick(regs);
-        extern void timer_tick(void);
-        timer_tick();
     }
 
     return out;

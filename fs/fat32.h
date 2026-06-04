@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "vfs.h"
 
 /*
  * FAT32 Filesystem Driver
@@ -19,7 +20,8 @@ typedef struct {
 } fat32_info_t;
 
 /* Initialize FAT32 driver */
-int fat32_init(uint32_t lba_offset);
+int fat32_init(uint32_t dev_id, uint32_t lba_offset);
+vfs_inode_t* fat32_get_inode(const char* path);
 
 /* Get filesystem info */
 fat32_info_t* fat32_get_info(void);

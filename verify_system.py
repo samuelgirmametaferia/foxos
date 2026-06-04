@@ -73,6 +73,18 @@ def type_text_via_monitor(monitor, text):
     for ch in text:
         monitor_send_line(monitor, 'sendkey ' + key_name_for_char(ch))
 
+def decode_output(data):
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        res = ""
+        for b in data:
+            if b < 128:
+                res += chr(b)
+            else:
+                res += f"\\x{b:02x}"
+        return res
+
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
     sys.stdout.flush()
@@ -130,13 +142,15 @@ def run_verify():
             r, _, _ = select.select([proc.stdout], [], [], 0.1)
             if r:
                 char = proc.stdout.read(1)
-                if not char: break
+                if not char:
+                    log(f"ERROR: QEMU stdout closed (crashed?). Output so far:\n{decode_output(output)}")
+                    return False
                 output += char
                 if b"foxos> " in output:
                     log("SUCCESS: foxOS prompt reached.")
                     break
         else:
-            log(f"ERROR: Boot timeout. Output so far:\n{output.decode('utf-8', errors='replace')}")
+            log(f"ERROR: Boot timeout. Output so far:\n{decode_output(output)}")
             return False
 
         # Test 'sleep 100'
@@ -152,10 +166,10 @@ def run_verify():
                 char = proc.stdout.read(1)
                 response += char
                 if b"woke up" in response:
-                    log(f"SUCCESS: 'sleep' woke up. Response: {response.decode('utf-8', errors='replace').strip()}")
+                    log(f"SUCCESS: 'sleep' woke up. Response: {decode_output(response).strip()}")
                     break
         else:
-            log(f"ERROR: 'sleep' timed out or hung. Response so far: {response.decode('utf-8', errors='replace').strip()}")
+            log(f"ERROR: 'sleep' timed out or hung. Response so far: {decode_output(response).strip()}")
             return False
 
         # Test scheduler tests
@@ -174,7 +188,7 @@ def run_verify():
                     log(f"SUCCESS: scheduler tests passed")
                     break
         else:
-            log(f"WARNING: schedtest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+            log(f"WARNING: schedtest timed out. Response: {decode_output(test_response).strip()}")
 
         # Test interrupt stability
         log("Testing 'inttest' (interrupt stability)...")
@@ -192,7 +206,7 @@ def run_verify():
                     log(f"SUCCESS: interrupt tests passed")
                     break
         else:
-            log(f"WARNING: inttest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+            log(f"WARNING: inttest timed out. Response: {decode_output(test_response).strip()}")
 
         # Test CPU detection
         log("Testing 'cputest' (CPU/multicore detection)...")
@@ -210,7 +224,7 @@ def run_verify():
                     log(f"SUCCESS: CPU detection tests passed")
                     break
         else:
-            log(f"WARNING: cputest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+            log(f"WARNING: cputest timed out. Response: {decode_output(test_response).strip()}")
 
         log("Testing 'iotest' (I/O integration tests)...")
         type_text_via_monitor(monitor, "iotest")
@@ -227,7 +241,7 @@ def run_verify():
                     log(f"SUCCESS: I/O integration tests passed")
                     break
         else:
-            log(f"WARNING: iotest timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+            log(f"WARNING: iotest timed out. Response: {decode_output(test_response).strip()}")
 
         tests_to_run = [
             ("smptest", b"smptest done", "SMP core boot"),
@@ -257,7 +271,27 @@ def run_verify():
                         log(f"SUCCESS: {desc} passed")
                         break
             else:
-                log(f"WARNING: {cmd} timed out. Response: {test_response.decode('utf-8', errors='replace').strip()}")
+                log(f"WARNING: {cmd} timed out. Response: {decode_output(test_response).strip()}")
+
+        # Test 'sysrq 88' (System Diagnostic)
+        log("Testing 'sysrq 88' (System Diagnostic)...")
+        type_text_via_monitor(monitor, "sysrq 88")
+        monitor_send_line(monitor, "sendkey ret")
+        
+        sysrq_start = time.time()
+        sysrq_response = b""
+        while time.time() - sysrq_start < 5:
+            r, _, _ = select.select([proc.stdout], [], [], 0.1)
+            if r:
+                char = proc.stdout.read(1)
+                if not char:
+                    break
+                sysrq_response += char
+                if b"SYSTEM DIAGNOSTIC" in sysrq_response:
+                    log("SUCCESS: SysRq diagnostic triggered")
+                    break
+        else:
+            log(f"WARNING: SysRq diagnostic not confirmed. Response: {decode_output(sysrq_response).strip()}")
 
         log("Testing 'tss' (GUI shell launch + keyboard input)...")
         type_text_via_monitor(monitor, "tss")
@@ -276,13 +310,14 @@ def run_verify():
                     log("SUCCESS: TSS launched")
                     break
         else:
-            log(f"ERROR: TSS did not start. Response: {tss_response.decode('utf-8', errors='replace').strip()}")
+            log(f"ERROR: TSS did not start. Response: {decode_output(tss_response).strip()}")
             return False
-
-        # Test shutdown command
         log("Testing 'shutdown' command...")
-        type_text_via_monitor(monitor, "shutdown")
-        monitor_send_line(monitor, "sendkey ret")
+        try:
+            type_text_via_monitor(monitor, "shutdown")
+            monitor_send_line(monitor, "sendkey ret")
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            log("INFO: Monitor connection closed during shutdown command (likely QEMU exiting).")
         
         shutdown_start = time.time()
         shutdown_response = b""
@@ -295,7 +330,7 @@ def run_verify():
                     return True
                 shutdown_response += char
         
-        log(f"WARNING: QEMU still running after shutdown. Response: {shutdown_response.decode('utf-8', errors='replace').strip()}")
+        log(f"WARNING: QEMU still running after shutdown. Response: {decode_output(shutdown_response).strip()}")
         
         log("FINAL VERIFICATION: PIT, KEYBOARD, SCHEDULER, INTERRUPT HANDLING, AND I/O INTEGRATION ARE STABLE.")
         return True

@@ -2,8 +2,10 @@
 #include "io.h"
 #include "quiesce.h"
 #include "timer.h"
+#include "../kernel/spinlock.h"
 
 static volatile int g_serial_quiesced = 0;
+static spinlock_t serial_lock = SPINLOCK_INIT;
 
 static void serial_quiesce_cb(int enter) {
     g_serial_quiesced = enter ? 1 : 0;
@@ -34,39 +36,54 @@ static int serial_is_transmit_empty(void) {
 }
 
 static void serial_write_locked(const char* s) {
-    uint64_t flags;
-    __asm__ __volatile__ (
-        "pushfq\n\t"
-        "pop %0\n\t"
-        "cli\n\t"
-        : "=r" (flags)
-        :
-        : "memory"
-    );
+    uint64_t rflags = spinlock_acquire_irqsave(&serial_lock);
 
     while (*s) {
         serial_putc(*s++);
     }
 
-    __asm__ __volatile__ (
-        "push %0\n\t"
-        "popfq\n\t"
-        :
-        : "r" (flags)
-        : "memory", "cc"
-    );
+    spinlock_release_irqrestore(&serial_lock, rflags);
+}
+
+void serial_write_panic(const char* s);
+
+void serial_write_len(const char* s, uint64_t len) {
+    for (uint64_t i = 0; i < len; i++) {
+        serial_putc(s[i]);
+    }
 }
 
 void serial_write(const char* s) {
-    serial_wait_quiesce();
-    serial_write_locked(s);
+    if (!s) return;
+    uint64_t rflags = spinlock_acquire_irqsave(&serial_lock);
+    int limit = 1000;
+    while (*s && limit-- > 0) {
+        serial_putc(*s++);
+    }
+    spinlock_release_irqrestore(&serial_lock, rflags);
+    if (limit <= 0) {
+        serial_write_panic(" [serial_write limit reached] ");
+    }
 }
 
-
 void serial_writeln(const char* s) {
-    serial_wait_quiesce();
-    serial_write_locked(s);
+    if (!s) return;
+    uint64_t rflags = spinlock_acquire_irqsave(&serial_lock);
+    int limit = 1000;
+    while (*s && limit-- > 0) {
+        serial_putc(*s++);
+    }
     serial_putc('\n');
+    spinlock_release_irqrestore(&serial_lock, rflags);
+}
+
+void serial_write_panic(const char* s) {
+    while (*s) {
+        while (!serial_is_transmit_empty()) {
+            __asm__ __volatile__("pause");
+        }
+        outb(COM1_BASE, (uint8_t)*s++);
+    }
 }
 
 void serial_init(void) {
@@ -80,9 +97,22 @@ void serial_init(void) {
     quiesce_register(serial_quiesce_cb);
 }
 
+int serial_received(void) {
+    return inb(COM1_BASE + 5) & 1;
+}
+
+int serial_getc(void) {
+    if (!serial_received()) return -1;
+    return (int)inb(COM1_BASE);
+}
+
 void serial_putc(char c) {
-    while (!serial_is_transmit_empty()) {
+    int timeout = 100000;
+    while (!(inb(COM1_BASE + 5) & 0x20) && timeout-- > 0) {
         __asm__ __volatile__("pause");
+    }
+    if (timeout <= 0) {
+        // UART hang? Just blast it anyway
     }
     outb(COM1_BASE, (uint8_t)c);
 }

@@ -9,13 +9,41 @@ BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x
 [uefi] reading kernel image
 [uefi] kernel image loaded
 [uefi] loading kernel elf
+[uefi] load PT_LOAD
+[uefi] HEX:
+0000000000000000
+[uefi] HEX:
+0000000000200000
+[uefi] HEX:
+0000000000000083
+[uefi] load PT_LOAD
+[uefi] HEX:
+0000000000000001
+[uefi] HEX:
+0000000000283000
+[uefi] HEX:
+0000000000000010
+[uefi] load PT_LOAD
+[uefi] HEX:
+0000000000000002
+[uefi] HEX:
+0000000000293000
+[uefi] HEX:
+0000000000000008
+[uefi] load PT_LOAD
+[uefi] HEX:
+0000000000000003
+[uefi] HEX:
+000000000029B000
+[uefi] HEX:
+0000000000000138
 [uefi] building boot info
 [uefi] GOP LocateProtocol success
 [uefi] HEX:
-00000000BE7BFB38
+000000001E7BF038
 [uefi] FB base reported by get_graphics:
 [uefi] HEX:
-00000000C0000000
+0000000080000000
 [uefi] clearing firmware framebuffer
 [uefi] probing memory map
 [uefi] allocating memory map buffer
@@ -27,37 +55,35 @@ BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x
 [uefi] boot info ready
 [uefi] boot_info ptr:
 [uefi] HEX:
-00000000BE6FB000
+000000001E749000
 [uefi] exiting boot services
 [uefi] jumping to kernel
 ABX[quiesce] registered
 [foxos] serial online
-[foxos] boot ptr: 3194990592
+[foxos] boot ptr: 510955520
 [foxos] uefi handoff received
 [idt] IDT initialized successfully
 [foxos] idt ready
-[smp] Detected logical CPU cores: 1
-[smp] Single-core CPU, skipping AP initialization
 [percpu] BSP initialized
 [foxos] per-CPU support initialized
 [foxos] gdt initialized
 [foxos] syscall handlers installed
-[apic] APIC base: 0x00000000FEE00000
+[apic] APIC base: 0xFEE00000
 [apic] Local APIC ID: 0
 [apic] APIC initialized
 [foxos] timer online
 [quiesce] registered
 [foxos] console ready
 [mem] mem_init start
-[mem] memory_map_count: 123
+[mem] memory_map_count: 118
 [mem] first region: type=7 start=0 pages=135
 [mem] dumping memory map:
 [mem] region 0: type=7 start=0 pages=135
 [mem] region 1: type=4 start=552960 pages=1
 [mem] region 2: type=7 start=557056 pages=24
 [mem] region 3: type=7 start=1048576 pages=256
-[mem] region 4: type=4 start=2097152 pages=345
-[mem] region 5: type=7 start=3510272 pages=167
+[mem] region 4: type=4 start=2097152 pages=467
+[mem] region 5: type=7 start=4009984 pages=45
 [mem] region 6: type=1 start=4194304 pages=5
 [mem] region 7: type=7 start=4214784 pages=1019
 [mem] region 8: type=10 start=8388608 pages=8
@@ -68,121 +94,121 @@ ABX[quiesce] registered
 [mem] region 13: type=7 start=8466432 pages=1
 [mem] region 14: type=10 start=8470528 pages=236
 [mem] region 15: type=4 start=9437184 pages=3712
-[mem] region 16: type=7 start=24641536 pages=762860
-[mem] region 17: type=4 start=3149316096 pages=32
-[mem] region 18: type=7 start=3149447168 pages=9236
-[mem] region 19: type=4 start=3187277824 pages=1393
-[mem] region 20: type=3 start=3192983552 pages=490
-[mem] region 21: type=4 start=3194990592 pages=74
-[mem] region 22: type=7 start=3195293696 pages=1
-[mem] region 23: type=4 start=3195297792 pages=116
-[mem] region 24: type=3 start=3195772928 pages=4
-[mem] region 25: type=4 start=3195789312 pages=4
-[mem] region 26: type=3 start=3195805696 pages=7
-[mem] region 27: type=4 start=3195834368 pages=1
-[mem] region 28: type=3 start=3195838464 pages=3
-[mem] region 29: type=4 start=3195850752 pages=3
-[mem] region 30: type=3 start=3195863040 pages=33
-[mem] region 31: type=4 start=3195998208 pages=1
-[mem] region 32: type=3 start=3196002304 pages=2
-[mem] region 33: type=4 start=3196010496 pages=2
-[mem] region 34: type=3 start=3196018688 pages=8
-[mem] region 35: type=4 start=3196051456 pages=63
-[mem] region 36: type=3 start=3196309504 pages=32
-[mem] region 37: type=4 start=3196440576 pages=1
-[mem] region 38: type=3 start=3196444672 pages=3
-[mem] region 39: type=4 start=3196456960 pages=3
-[mem] region 40: type=3 start=3196469248 pages=7
-[mem] region 41: type=4 start=3196497920 pages=3
-[mem] region 42: type=3 start=3196510208 pages=15
-[mem] region 43: type=4 start=3196571648 pages=3
-[mem] region 44: type=3 start=3196583936 pages=8
-[mem] region 45: type=4 start=3196616704 pages=2
-[mem] region 46: type=3 start=3196624896 pages=5
-[mem] region 47: type=4 start=3196645376 pages=2
-[mem] region 48: type=3 start=3196653568 pages=12
-[mem] region 49: type=4 start=3196702720 pages=2
-[mem] region 50: type=3 start=3196710912 pages=15
-[mem] region 51: type=4 start=3196772352 pages=3
-[mem] region 52: type=3 start=3196784640 pages=31
-[mem] region 53: type=4 start=3196911616 pages=1
-[mem] region 54: type=3 start=3196915712 pages=3
-[mem] region 55: type=4 start=3196928000 pages=3
-[mem] region 56: type=3 start=3196940288 pages=7
-[mem] region 57: type=4 start=3196968960 pages=1
-[mem] region 58: type=3 start=3196973056 pages=22
-[mem] region 59: type=4 start=3197063168 pages=6
-[mem] region 60: type=3 start=3197087744 pages=10
-[mem] region 61: type=4 start=3197128704 pages=6
-[mem] region 62: type=3 start=3197153280 pages=10
-[mem] region 63: type=4 start=3197194240 pages=6
-[mem] region 64: type=3 start=3197218816 pages=36
-[mem] region 65: type=6 start=3197366272 pages=193
-[mem] region 66: type=4 start=3198156800 pages=513
-[mem] region 67: type=3 start=3200258048 pages=6
-[mem] region 68: type=4 start=3200282624 pages=2
-[mem] region 69: type=3 start=3200290816 pages=1
-[mem] region 70: type=4 start=3200294912 pages=3
-[mem] region 71: type=3 start=3200307200 pages=3
-[mem] region 72: type=4 start=3200319488 pages=3
-[mem] region 73: type=3 start=3200331776 pages=4
-[mem] region 74: type=4 start=3200348160 pages=4
-[mem] region 75: type=3 start=3200364544 pages=3
-[mem] region 76: type=4 start=3200376832 pages=1
-[mem] region 77: type=3 start=3200380928 pages=8
-[mem] region 78: type=4 start=3200413696 pages=5
-[mem] region 79: type=3 start=3200434176 pages=31
-[mem] region 80: type=4 start=3200561152 pages=1
-[mem] region 81: type=3 start=3200565248 pages=2
-[mem] region 82: type=4 start=3200573440 pages=2
-[mem] region 83: type=3 start=3200581632 pages=4
-[mem] region 84: type=4 start=3200598016 pages=2
-[mem] region 85: type=3 start=3200606208 pages=1
-[mem] region 86: type=4 start=3200610304 pages=1
-[mem] region 87: type=3 start=3200614400 pages=3
-[mem] region 88: type=4 start=3200626688 pages=2
-[mem] region 89: type=3 start=3200634880 pages=24
-[mem] region 90: type=4 start=3200733184 pages=2
-[mem] region 91: type=3 start=3200741376 pages=1
-[mem] region 92: type=4 start=3200745472 pages=1
-[mem] region 93: type=3 start=3200749568 pages=1
-[mem] region 94: type=4 start=3200753664 pages=1042
-[mem] region 95: type=3 start=3205021696 pages=4
-[mem] region 96: type=4 start=3205038080 pages=2
-[mem] region 97: type=3 start=3205046272 pages=6
-[mem] region 98: type=4 start=3205070848 pages=4
-[mem] region 99: type=3 start=3205087232 pages=13
-[mem] region 100: type=4 start=3205140480 pages=3
-[mem] region 101: type=3 start=3205152768 pages=3
-[mem] region 102: type=4 start=3205165056 pages=1086
-[mem] region 103: type=6 start=3209613312 pages=256
-[mem] region 104: type=5 start=3210661888 pages=256
-[mem] region 105: type=0 start=3211710464 pages=128
-[mem] region 106: type=9 start=3212234752 pages=18
-[mem] region 107: type=10 start=3212308480 pages=128
-[mem] region 108: type=4 start=3212832768 pages=1537
-[mem] region 109: type=7 start=3219128320 pages=111
-[mem] region 110: type=4 start=3219582976 pages=32
-[mem] region 111: type=3 start=3219714048 pages=53
-[mem] region 112: type=4 start=3219931136 pages=2
-[mem] region 113: type=7 start=3219939328 pages=1
-[mem] region 114: type=4 start=3219943424 pages=1
-[mem] region 115: type=3 start=3219947520 pages=1
-[mem] region 116: type=4 start=3219951616 pages=17
-[mem] region 117: type=3 start=3220021248 pages=26
-[mem] region 118: type=6 start=3220127744 pages=132
-[mem] region 119: type=10 start=3220668416 pages=136
-[mem] region 120: type=7 start=4294967296 pages=3407872
-[mem] region 121: type=11 start=4290772992 pages=1024
-[mem] region 122: type=0 start=1086626725888 pages=3145728
-[mem] total conventional pages: 4181692
-[mem] highest considered phys_end: 18253611008
-[mem] paging map_end: 18253611008
+[mem] region 16: type=7 start=24641536 pages=107500
+[mem] region 17: type=4 start=464961536 pages=32
+[mem] region 18: type=7 start=465092608 pages=9238
+[mem] region 19: type=4 start=502931456 pages=1391
+[mem] region 20: type=3 start=508628992 pages=490
+[mem] region 21: type=4 start=510636032 pages=191
+[mem] region 22: type=3 start=511418368 pages=4
+[mem] region 23: type=4 start=511434752 pages=4
+[mem] region 24: type=3 start=511451136 pages=7
+[mem] region 25: type=4 start=511479808 pages=1
+[mem] region 26: type=3 start=511483904 pages=3
+[mem] region 27: type=4 start=511496192 pages=3
+[mem] region 28: type=3 start=511508480 pages=33
+[mem] region 29: type=4 start=511643648 pages=1
+[mem] region 30: type=3 start=511647744 pages=2
+[mem] region 31: type=4 start=511655936 pages=2
+[mem] region 32: type=3 start=511664128 pages=8
+[mem] region 33: type=4 start=511696896 pages=63
+[mem] region 34: type=3 start=511954944 pages=32
+[mem] region 35: type=4 start=512086016 pages=1
+[mem] region 36: type=3 start=512090112 pages=3
+[mem] region 37: type=4 start=512102400 pages=3
+[mem] region 38: type=3 start=512114688 pages=7
+[mem] region 39: type=4 start=512143360 pages=3
+[mem] region 40: type=3 start=512155648 pages=15
+[mem] region 41: type=4 start=512217088 pages=3
+[mem] region 42: type=3 start=512229376 pages=8
+[mem] region 43: type=4 start=512262144 pages=2
+[mem] region 44: type=3 start=512270336 pages=5
+[mem] region 45: type=4 start=512290816 pages=2
+[mem] region 46: type=3 start=512299008 pages=12
+[mem] region 47: type=4 start=512348160 pages=2
+[mem] region 48: type=3 start=512356352 pages=15
+[mem] region 49: type=4 start=512417792 pages=3
+[mem] region 50: type=3 start=512430080 pages=31
+[mem] region 51: type=4 start=512557056 pages=1
+[mem] region 52: type=3 start=512561152 pages=3
+[mem] region 53: type=4 start=512573440 pages=3
+[mem] region 54: type=3 start=512585728 pages=3
+[mem] region 55: type=4 start=512598016 pages=1
+[mem] region 56: type=3 start=512602112 pages=26
+[mem] region 57: type=4 start=512708608 pages=6
+[mem] region 58: type=3 start=512733184 pages=10
+[mem] region 59: type=4 start=512774144 pages=6
+[mem] region 60: type=3 start=512798720 pages=10
+[mem] region 61: type=4 start=512839680 pages=6
+[mem] region 62: type=3 start=512864256 pages=36
+[mem] region 63: type=6 start=513011712 pages=193
+[mem] region 64: type=4 start=513802240 pages=513
+[mem] region 65: type=3 start=515903488 pages=6
+[mem] region 66: type=4 start=515928064 pages=2
+[mem] region 67: type=3 start=515936256 pages=1
+[mem] region 68: type=4 start=515940352 pages=3
+[mem] region 69: type=3 start=515952640 pages=3
+[mem] region 70: type=4 start=515964928 pages=3
+[mem] region 71: type=3 start=515977216 pages=4
+[mem] region 72: type=4 start=515993600 pages=4
+[mem] region 73: type=3 start=516009984 pages=3
+[mem] region 74: type=4 start=516022272 pages=1
+[mem] region 75: type=3 start=516026368 pages=8
+[mem] region 76: type=4 start=516059136 pages=5
+[mem] region 77: type=3 start=516079616 pages=31
+[mem] region 78: type=4 start=516206592 pages=3
+[mem] region 79: type=3 start=516218880 pages=6
+[mem] region 80: type=4 start=516243456 pages=2
+[mem] region 81: type=3 start=516251648 pages=1
+[mem] region 82: type=4 start=516255744 pages=1
+[mem] region 83: type=3 start=516259840 pages=3
+[mem] region 84: type=4 start=516272128 pages=2
+[mem] region 85: type=3 start=516280320 pages=24
+[mem] region 86: type=4 start=516378624 pages=2
+[mem] region 87: type=3 start=516386816 pages=1
+[mem] region 88: type=4 start=516390912 pages=1
+[mem] region 89: type=3 start=516395008 pages=1
+[mem] region 90: type=4 start=516399104 pages=1042
+[mem] region 91: type=3 start=520667136 pages=4
+[mem] region 92: type=4 start=520683520 pages=2
+[mem] region 93: type=3 start=520691712 pages=6
+[mem] region 94: type=4 start=520716288 pages=4
+[mem] region 95: type=3 start=520732672 pages=13
+[mem] region 96: type=4 start=520785920 pages=3
+[mem] region 97: type=3 start=520798208 pages=3
+[mem] region 98: type=4 start=520810496 pages=1086
+[mem] region 99: type=6 start=525258752 pages=256
+[mem] region 100: type=5 start=526307328 pages=256
+[mem] region 101: type=0 start=527355904 pages=128
+[mem] region 102: type=9 start=527880192 pages=18
+[mem] region 103: type=10 start=527953920 pages=128
+[mem] region 104: type=4 start=528478208 pages=1537
+[mem] region 105: type=7 start=534773760 pages=111
+[mem] region 106: type=4 start=535228416 pages=32
+[mem] region 107: type=3 start=535359488 pages=53
+[mem] region 108: type=4 start=535576576 pages=2
+[mem] region 109: type=7 start=535584768 pages=1
+[mem] region 110: type=4 start=535588864 pages=1
+[mem] region 111: type=3 start=535592960 pages=1
+[mem] region 112: type=4 start=535597056 pages=17
+[mem] region 113: type=3 start=535666688 pages=26
+[mem] region 114: type=6 start=535773184 pages=132
+[mem] region 115: type=10 start=536313856 pages=136
+[mem] region 116: type=11 start=4290772992 pages=1024
+[mem] region 117: type=0 start=1086626725888 pages=3145728
+[mem] total conventional pages: 118339
+[mem] highest considered phys_end: 4294967296
+[mem] paging map_end: 4294967296
 [foxos] memory init done
 [mem] setup_identity_paging start
-[mem] paging: allocating pages for page-tables: 19
+[mem] paging: allocating pages for page-tables: 6
 [mem] paging: page-tables built; enabling paging now
 [mem] paging enabled
+[process] Subsystem initialized (PID 1 active)
+[INFO ] Rust kernel subsystem initialized
+[foxos] rust handshake ready
+[idt] CPU interrupts enabled
+[foxos] interrupts enabled
 [tests] boot self-tests start
 [tests] pmm_alloc_contiguous_pages(8) ok
 [tests] pmm_free_contiguous_pages(8) ok
@@ -198,18 +224,19 @@ ABX[quiesce] registered
 [tests] defrag data ok
 [tests] defrag data ok
 [tests] defrag tests done
-[foxos] initializing interrupts...
-[idt] CPU interrupts enabled
-[foxos] interrupts enabled
 [foxos] scheduler started
+[smp] Detected logical CPU cores: 1
+[smp] Single-core CPU, skipping AP initialization
 [auto] arch info:
 [auto] x86_64 native
 [auto] pointer bits: 64
 [auto] pointer bytes: 8
-[auto] ram pages total: 4456448
-[auto] ram pages free: 4454800
+[auto] ram pages total: 1048576
+[auto] ram pages free: 118340
 [auto] framebuffer:
-[auto] base: 3221225472
+.[bio] Background flusher thread started
+[INFO ] Watchdog thread started
+[auto] base: 2147483648
 [auto] size: 4096000
 [auto] width: 1280
 [auto] height: 800
@@ -217,19 +244,15 @@ ABX[quiesce] registered
 [auto] pixel_format: 1
 [foxfs] engine initialized
 [foxos] gpu init done
-[bio] Background flusher thread started
 [foxos] vfs/initrd ready
-[ata] Using PIO for block device 0 (DMA not available)
-[quiesce] registered
-[ata] Initialization complete. Primary Master registered as block device 0.
-[bio] submit dev=0 block=0 R
-[part] Found partition 0 type=238 start=1 count=131071
-[foxos] ata/partition init done
-[bio] submit dev=1 block=0 R
-[foxfs] mount failed: invalid magic
-[foxos] foxFS mount failed, using ramfs
-[foxos] keyboard/mouse ready
-[foxos] relocator initialized (TSS_VERSION_1)
-[foxos] attempting to exec /bin/tss.fx... OK (TSS spawned)
-foxos> 
-[tss] entering main
+[auto] attempting to exec /bin/tss.fx...
+[vfs] sys_open: path=/bin/tss.fx
+[loader] segment: vaddr=549757911040 memsz=400
+[loader] segment: vaddr=549755813888 memsz=19056
+[loader] segment: vaddr=549755837040 memsz=1376
+[loader] segment: vaddr=549755842512 memsz=2248
+[loader] jumping to entry: 549755832928
+[process] spawn elf entry=549755832928 stack=550828494848
+[auto] TSS spawned
+[tss] started[vfs] sys_open: path=/dev/fb0
+[vfs] sys_mmap: fd=0 path=/dev/fb0

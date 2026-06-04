@@ -2,9 +2,9 @@
 #include <stdint.h>
 #include "../kernel/spinlock.h"
 
-#define BSIZE 4096
-#define NBUF 128
-#define NBUCKETS 64
+#define BSIZE 512
+#define NBUF 256
+#define NBUCKETS 128
 
 #define B_VALID 0x2
 #define B_DIRTY 0x4

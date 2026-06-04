@@ -109,7 +109,9 @@ static const uint8_t font8x8_basic[96][8] = {
 };
 
 static inline uint16_t vga_entry(char c) {
-    return ((uint16_t)color << 8) | (uint8_t)c;
+    uint8_t glyph = (uint8_t)c;
+    if (glyph < 32 || glyph >= 127) glyph = '.';
+    return ((uint16_t)color << 8) | glyph;
 }
 
 static void vga_hide_cursor(void) {
@@ -137,25 +139,53 @@ static void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_
 
 static void fb_scroll(void) {
     if (!fb_active || fb_rows <= 1) return;
-    uint32_t row_pixels = fb_stride * FB_CELL_H;
+    extern void serial_write_panic(const char* s);
+    // serial_write_panic("[fb] scrolling...\n");
+    
     uint32_t copy_rows = (uint32_t)(fb_rows - 1) * FB_CELL_H;
-    for (uint32_t y = 0; y < copy_rows; ++y) {
-        uint32_t* dst = (uint32_t*)((uint8_t*)fb_pixels + (y * fb_stride * 4u));
-        uint32_t* src = (uint32_t*)((uint8_t*)fb_pixels + ((y + FB_CELL_H) * fb_stride * 4u));
-        for (uint32_t x = 0; x < fb_stride; ++x) dst[x] = src[x];
-    }
+    uint32_t row_bytes = fb_stride * 4;
+    
+    extern void* memcpy(void* dst, const void* src, uint64_t n);
+    memcpy((void*)fb_pixels, (void*)((uint8_t*)fb_pixels + FB_CELL_H * row_bytes), copy_rows * row_bytes);
+    
     fb_fill_rect(0, (uint32_t)(fb_rows - 1) * FB_CELL_H, fb_width, FB_CELL_H, fb_color(color >> 4));
 }
 
 static void fb_draw_char(uint32_t x, uint32_t y, char c) {
-    uint8_t glyph_index = (c >= 32 && c < 128) ? (uint8_t)(c - 32) : (uint8_t)('?' - 32);
-    uint32_t fg = fb_color(color & 0x0F);
-    uint32_t bg = fb_color(color >> 4);
-    for (uint32_t row = 0; row < 8; ++row) {
-        uint8_t bits = font8x8_basic[glyph_index][row];
-        for (uint32_t col = 0; col < 8; ++col) {
-            uint32_t pixel = (bits & (1u << col)) ? fg : bg;
-            fb_putpixel(x + col, y + row, pixel);
+    if (c >= 32 && (unsigned char)c < 128) {
+        uint8_t glyph_index = (uint8_t)(c - 32);
+        uint32_t fg = fb_color(color & 0x0F);
+        uint32_t bg = fb_color(color >> 4);
+        for (uint32_t row = 0; row < 8; ++row) {
+            uint8_t bits = font8x8_basic[glyph_index][row];
+            for (uint32_t col = 0; col < 8; ++col) {
+                uint32_t pixel = (bits & (1u << col)) ? fg : bg;
+                fb_putpixel(x + col, y + row, pixel);
+            }
+        }
+    } else {
+        /* Print hex code for debugging non-printables */
+        char hex[3];
+        const char* hex_chars = "0123456789ABCDEF";
+        hex[0] = hex_chars[((uint8_t)c >> 4) & 0xF];
+        hex[1] = hex_chars[(uint8_t)c & 0xF];
+        hex[2] = 0;
+        
+        uint32_t debug_fg = 0x00FFFF00; // Yellow
+        uint32_t debug_bg = 0x00FF0000; // Red
+        
+        // Draw a small '0x' or just the hex
+        // For simplicity, just draw two tiny characters or a colored box
+        fb_fill_rect(x, y, 8, 8, debug_bg);
+        // We can't easily draw two chars in one cell, so just draw one '?' in a different color
+        // or just the dot. Let's use the dot for now but in a bright color.
+        uint8_t dot_glyph = (uint8_t)('.' - 32);
+        for (uint32_t row = 0; row < 8; ++row) {
+            uint8_t bits = font8x8_basic[dot_glyph][row];
+            for (uint32_t col = 0; col < 8; ++col) {
+                uint32_t pixel = (bits & (1u << col)) ? debug_fg : debug_bg;
+                fb_putpixel(x + col, y + row, pixel);
+            }
         }
     }
 }
@@ -231,59 +261,63 @@ static void fb_newline(void) {
     }
 }
 
-void console_putc(char c) {
-    console_wait_quiesce();
+void console_putc_at(int x, int y, uint8_t c) {
     if (fb_active) {
-        if (c == '\n') {
-            fb_newline();
-            return;
-        }
-        if (c == '\r') {
-            cx = 0;
-            return;
-        }
-        if (c == '\b') {
-            if (cx > 0) {
-                cx--;
-                fb_fill_rect((uint32_t)cx * FB_CELL_W, (uint32_t)cy * FB_CELL_H, FB_CELL_W, FB_CELL_H, fb_color(color >> 4));
-            }
-            return;
-        }
-        fb_draw_char((uint32_t)cx * FB_CELL_W, (uint32_t)cy * FB_CELL_H, c);
-        if (++cx >= fb_cols) fb_newline();
-        return;
-    }
-
-    if (c == '\n') {
-        cx = 0;
-        cy++;
-        vga_scroll();
-        return;
-    }
-    if (c == '\r') {
-        cx = 0;
-        return;
-    }
-    if (c == '\b') {
-        if (cx > 0) {
-            cx--;
-            VGA_MEM[cy * VGA_COLS + cx] = vga_entry(' ');
+        if (x >= 0 && x < fb_cols && y >= 0 && y < fb_rows) {
+            fb_draw_char((uint32_t)x * FB_CELL_W, (uint32_t)y * FB_CELL_H, (char)c);
         }
         return;
     }
-    VGA_MEM[cy * VGA_COLS + cx] = vga_entry(c);
-    if (++cx >= VGA_COLS) {
-        cx = 0;
-        cy++;
-        vga_scroll();
+    if (x >= 0 && x < VGA_COLS && y >= 0 && y < VGA_ROWS) {
+        VGA_MEM[y * VGA_COLS + x] = vga_entry((char)c);
     }
 }
 
+void console_clear_at(int x, int y) {
+    if (fb_active) {
+        if (x >= 0 && x < fb_cols && y >= 0 && y < fb_rows) {
+            fb_fill_rect((uint32_t)x * FB_CELL_W, (uint32_t)y * FB_CELL_H, FB_CELL_W, FB_CELL_H, fb_color(color >> 4));
+        }
+        return;
+    }
+    if (x >= 0 && x < VGA_COLS && y >= 0 && y < VGA_ROWS) {
+        VGA_MEM[y * VGA_COLS + x] = vga_entry(' ');
+    }
+}
+
+void console_putc(char c) {
+    if (c == '\0') return; // Ignore nulls
+    
+    extern void rust_console_putc(uint8_t c);
+    rust_console_putc((uint8_t)c);
+}
+
 void console_write(const char* s) {
-    while (*s) console_putc(*s++);
+    if (!s) return;
+    extern void rust_console_write(const char* s, uint64_t len);
+    uint64_t l = 0;
+    while(s[l]) l++;
+    rust_console_write(s, l);
 }
 
 void console_writeln(const char* s) {
     console_write(s);
     console_putc('\n');
+}
+
+void console_clear_raw(void) {
+    console_clear();
+}
+
+void console_set_color_raw(uint8_t fg, uint8_t bg) {
+    console_set_color(fg, bg);
+}
+
+void console_newline_raw(void) {
+    if (fb_active) fb_newline();
+    else {
+        cx = 0;
+        cy++;
+        vga_scroll();
+    }
 }

@@ -46,7 +46,9 @@ static vfs_ops_t devfs_vfs_ops = {
 };
 
 vfs_inode_t* devfs_get_inode(const char* name) {
+    serial_write("[devfs] get_inode: "); serial_write(name); serial_writeln("");
     spinlock_acquire(&g_devfs_lock);
+    serial_writeln("[devfs] lock acquired");
     devfs_node_t* dev = 0;
     for (int i = 0; i < MAX_DEVICES; i++) {
         if (g_devices[i].active) {
@@ -62,13 +64,20 @@ vfs_inode_t* devfs_get_inode(const char* name) {
         }
     }
     spinlock_release(&g_devfs_lock);
+    serial_writeln("[devfs] lock released");
     
     if (!dev) {
+        serial_writeln("[devfs] device not found");
         return 0;
     }
     
+    serial_writeln("[devfs] device found, allocating inode");
     vfs_inode_t* inode = vfs_inode_alloc();
-    if (!inode) return 0;
+    if (!inode) {
+        serial_writeln("[devfs] vfs_inode_alloc failed");
+        return 0;
+    }
+    serial_write("[devfs] inode allocated: "); serial_u64((uint64_t)inode); serial_writeln("");
     inode->inode_num = (uint64_t)dev;
     inode->size = 0;
     inode->type = 1; // file

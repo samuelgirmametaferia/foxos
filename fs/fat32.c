@@ -53,7 +53,10 @@ typedef struct {
     uint32_t file_size;
 } __attribute__((packed)) fat32_raw_entry_t;
 
-int fat32_init(uint32_t lba_offset) {
+static uint32_t g_dev_id = 0;
+
+int fat32_init(uint32_t dev_id, uint32_t lba_offset) {
+    g_dev_id = dev_id;
     g_lba_offset = lba_offset;
     
     if (!ata_available()) {
@@ -61,10 +64,10 @@ int fat32_init(uint32_t lba_offset) {
         return -1;
     }
     
-    binit();
-    
     /* Read boot sector */
-    buf_t* b = bread(0, lba_offset);
+    serial_write("[fat32] reading boot sector from dev="); serial_u64(dev_id);
+    serial_write(" offset="); serial_u64(lba_offset); serial_writeln("");
+    buf_t* b = bread(dev_id, lba_offset);
     if (!b || !(b->flags & B_VALID)) {
         serial_writeln("[fat32] Failed to read boot sector");
         if (b) brelse(b);
@@ -73,9 +76,19 @@ int fat32_init(uint32_t lba_offset) {
     
     fat32_boot_t* boot = (fat32_boot_t*)b->data;
     
+    serial_write("[fat32] data[0,1,2]: ");
+    serial_u64(b->data[0]); serial_write(" ");
+    serial_u64(b->data[1]); serial_write(" ");
+    serial_u64(b->data[2]); serial_writeln("");
+    
+    serial_write("[fat32] bytes_per_sector: "); serial_u64(boot->bytes_per_sector); serial_writeln("");
+    serial_write("[fat32] sectors_per_cluster: "); serial_u64(boot->sectors_per_cluster); serial_writeln("");
+    serial_write("[fat32] root_entries: "); serial_u64(boot->root_entries); serial_writeln("");
+
     /* Validate boot sector */
     if (boot->bytes_per_sector != SECTOR_SIZE) {
-        serial_writeln("[fat32] Invalid sector size");
+        serial_write("[fat32] Invalid sector size: expected "); serial_u64(SECTOR_SIZE);
+        serial_write(" got "); serial_u64(boot->bytes_per_sector); serial_writeln("");
         brelse(b);
         return -3;
     }
@@ -111,7 +124,7 @@ int fat32_init(uint32_t lba_offset) {
     uint8_t* fat_buf = (uint8_t*)g_fat_table;
     for (uint32_t i = 0; i < sectors_per_fat32; i++) {
         uint32_t lba = g_fat32_info.fat_start_lba + i;
-        buf_t* fb = bread(0, lba);
+        buf_t* fb = bread(g_dev_id, lba);
         if (!fb || !(fb->flags & B_VALID)) {
             serial_writeln("[fat32] Failed to read FAT sector");
             if (fb) brelse(fb);
@@ -142,7 +155,7 @@ int fat32_read_cluster(uint32_t cluster, uint8_t* buffer) {
     
     /* Read all sectors in cluster */
     for (uint32_t i = 0; i < g_fat32_info.sectors_per_cluster; i++) {
-        buf_t* b = bread(0, lba + i);
+        buf_t* b = bread(g_dev_id, lba + i);
         if (!b || !(b->flags & B_VALID)) {
             if (b) brelse(b);
             return -2;
@@ -166,7 +179,7 @@ int fat32_write_cluster(uint32_t cluster, const uint8_t* buffer) {
     
     /* Write all sectors in cluster */
     for (uint32_t i = 0; i < g_fat32_info.sectors_per_cluster; i++) {
-        buf_t* b = bread(0, lba + i);
+        buf_t* b = bread(g_dev_id, lba + i);
         if (!b) return -2;
         for (int j = 0; j < SECTOR_SIZE; j++) {
             b->data[j] = buffer[i * SECTOR_SIZE + j];
@@ -306,5 +319,10 @@ int fat32_delete_file(uint32_t parent_cluster, const char* name) {
     if (!g_fat32_ready) return -1;
     
     /* Simplified: placeholder for now */
+    return 0;
+}
+
+vfs_inode_t* fat32_get_inode(const char* path) {
+    (void)path;
     return 0;
 }

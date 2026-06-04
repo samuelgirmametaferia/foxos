@@ -29,6 +29,7 @@ typedef struct {
     int current_idx;
     int idle_idx;
     uint64_t ticks;
+    uint64_t last_switch_ticks;
 } cpu_runqueue_t;
 
 static cpu_runqueue_t runqueues[MAX_CPUS];
@@ -57,6 +58,7 @@ void scheduler_init(void) {
         runqueues[i].current_idx = 0;
         runqueues[i].idle_idx = -1;
         runqueues[i].ticks = 0;
+        runqueues[i].last_switch_ticks = 0;
     }
     
     spinlock_acquire(&thread_alloc_lock);
@@ -78,13 +80,13 @@ void scheduler_set_idle(void (*entry)(void)) {
 static int scheduler_create_from_template(void (*entry)(void), registers_t* tpl, uint32_t cpu_id) {
     if (!entry || !tpl) return -1;
     
-    spinlock_acquire(&thread_alloc_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&thread_alloc_lock);
     if (thread_count >= MAX_THREADS) {
-        spinlock_release(&thread_alloc_lock);
+        spinlock_release_irqrestore(&thread_alloc_lock, rflags);
         return -2;
     }
     int tid = thread_count++;
-    spinlock_release(&thread_alloc_lock);
+    spinlock_release_irqrestore(&thread_alloc_lock, rflags);
 
     uint8_t* stack = (uint8_t*)kmalloc(THREAD_STACK_SIZE);
     if (!stack) return -3;
@@ -112,13 +114,13 @@ static int scheduler_create_from_template(void (*entry)(void), registers_t* tpl,
 int scheduler_create(void (*entry)(void)) {
     if (!entry) return -1;
     
-    spinlock_acquire(&thread_alloc_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&thread_alloc_lock);
     if (thread_count >= MAX_THREADS) {
-        spinlock_release(&thread_alloc_lock);
+        spinlock_release_irqrestore(&thread_alloc_lock, rflags);
         return -2;
     }
     int tid = thread_count++;
-    spinlock_release(&thread_alloc_lock);
+    spinlock_release_irqrestore(&thread_alloc_lock, rflags);
 
     uint8_t* stack = (uint8_t*)kmalloc(THREAD_STACK_SIZE);
     if (!stack) return -3;
@@ -177,12 +179,12 @@ void scheduler_thread_sleep(int thread_id, uint64_t ms) {
     if (thread_id < 0 || thread_id >= MAX_THREADS) return;
     uint32_t cpu = thread_cpu_affinity[thread_id];
     
-    spinlock_acquire(&runqueues[cpu].lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&runqueues[cpu].lock);
     threads[thread_id].state = THREAD_SLEEPING;
     uint64_t ticks_to_wait = (ms * 100) / 1000u; // Assuming 100Hz
     if (ticks_to_wait == 0 && ms > 0) ticks_to_wait = 1;
     threads[thread_id].sleep_until_ticks = runqueues[cpu].ticks + ticks_to_wait;
-    spinlock_release(&runqueues[cpu].lock);
+    spinlock_release_irqrestore(&runqueues[cpu].lock, rflags);
     
     if (thread_id == scheduler_current_thread_id()) {
         scheduler_yield();
@@ -193,11 +195,11 @@ void scheduler_thread_wake(int thread_id) {
     if (thread_id < 0 || thread_id >= MAX_THREADS) return;
     uint32_t cpu = thread_cpu_affinity[thread_id];
     
-    spinlock_acquire(&runqueues[cpu].lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&runqueues[cpu].lock);
     if (threads[thread_id].state == THREAD_SLEEPING) {
         threads[thread_id].state = THREAD_READY;
     }
-    spinlock_release(&runqueues[cpu].lock);
+    spinlock_release_irqrestore(&runqueues[cpu].lock, rflags);
 }
 
 thread_state_t scheduler_get_thread_state(int thread_id) {
@@ -220,10 +222,10 @@ int scheduler_block_current(void) {
     uint32_t cpu_id = scheduler_get_cpu_id();
     if (cpu_id >= MAX_CPUS) return -1;
     
-    spinlock_acquire(&runqueues[cpu_id].lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&runqueues[cpu_id].lock);
     int tid = runqueues[cpu_id].current_idx;
     threads[tid].state = THREAD_BLOCKED;
-    spinlock_release(&runqueues[cpu_id].lock);
+    spinlock_release_irqrestore(&runqueues[cpu_id].lock, rflags);
     
     scheduler_yield();
     return 0;
@@ -233,11 +235,11 @@ int scheduler_unblock_thread(int thread_id) {
     if (thread_id < 0 || thread_id >= MAX_THREADS) return -1;
     uint32_t cpu = thread_cpu_affinity[thread_id];
     
-    spinlock_acquire(&runqueues[cpu].lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&runqueues[cpu].lock);
     if (threads[thread_id].state == THREAD_BLOCKED) {
         threads[thread_id].state = THREAD_READY;
     }
-    spinlock_release(&runqueues[cpu].lock);
+    spinlock_release_irqrestore(&runqueues[cpu].lock, rflags);
     return 0;
 }
 
@@ -249,7 +251,7 @@ void scheduler_ap_start(void) {
     uint32_t cpu_id = scheduler_get_cpu_id();
     if (cpu_id >= MAX_CPUS) return;
 
-    spinlock_acquire(&runqueues[cpu_id].lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&runqueues[cpu_id].lock);
 
     int selected = -1;
     int tc = thread_count;
@@ -287,7 +289,7 @@ void scheduler_ap_start(void) {
         }
     }
     
-    spinlock_release(&runqueues[cpu_id].lock);
+    spinlock_release_irqrestore(&runqueues[cpu_id].lock, rflags);
 
     if (regs) {
         __asm__ __volatile__("sti");
@@ -297,14 +299,29 @@ void scheduler_ap_start(void) {
     }
 }
 
+uint64_t scheduler_get_ticks(void) {
+    uint32_t cpu_id = scheduler_get_cpu_id();
+    if (cpu_id >= MAX_CPUS) cpu_id = 0;
+    return runqueues[cpu_id].ticks;
+}
+
 registers_t* scheduler_tick(registers_t* regs) {
     if (!sched_enabled) return regs;
+
+    /* Increment global ticks in Rust GCB if available */
+    extern void rust_increment_ticks(void);
+    rust_increment_ticks();
+
+    static int tick_count = 0;
+    if ((tick_count++ % 1000) == 0) {
+        serial_write(".");
+    }
 
     uint32_t cpu_id = scheduler_get_cpu_id();
     if (cpu_id >= MAX_CPUS) return regs;
 
     cpu_runqueue_t* rq = &runqueues[cpu_id];
-    spinlock_acquire(&rq->lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&rq->lock);
 
     rq->ticks++;
     
@@ -373,6 +390,26 @@ registers_t* scheduler_tick(registers_t* regs) {
         next_idx = (rq->idle_idx >= 0) ? rq->idle_idx : 0;
     }
 
+    if (next_idx != cur_idx) {
+        rq->last_switch_ticks = rq->ticks;
+    } else if (cur_idx != rq->idle_idx && cur_idx != 0) {
+        if (rq->ticks - rq->last_switch_ticks > 1000) { // 10 seconds
+            serial_write("\n[sched] !!! SOFT LOCKUP DETECTED !!!\n");
+            serial_write("[sched] Thread "); serial_u64(cur_idx);
+            serial_write(" (PID "); serial_u64(threads[cur_idx].pid);
+            serial_write(") hogging CPU for "); serial_u64((rq->ticks - rq->last_switch_ticks)/100);
+            serial_writeln(" seconds.");
+            
+            if (threads[cur_idx].pid > 1) {
+                serial_writeln("[sched] This is a user-space process. It may be hung.");
+                rq->last_switch_ticks = rq->ticks;
+            } else {
+                serial_writeln("[sched] This is a kernel thread! The system may be unstable.");
+                rq->last_switch_ticks = rq->ticks;
+            }
+        }
+    }
+
     if (next_idx != rq->idle_idx && next_idx >= 0) {
         threads[next_idx].state = THREAD_RUNNING;
     }
@@ -396,19 +433,19 @@ registers_t* scheduler_tick(registers_t* regs) {
         }
     }
 
-    spinlock_release(&rq->lock);
+    spinlock_release_irqrestore(&rq->lock, rflags);
 
     return next_regs;
 }
 
 int scheduler_create_user(void (*entry)(void), uint64_t user_rsp, uint32_t pid) {
-    spinlock_acquire(&thread_alloc_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&thread_alloc_lock);
     if (thread_count >= MAX_THREADS) {
-        spinlock_release(&thread_alloc_lock);
+        spinlock_release_irqrestore(&thread_alloc_lock, rflags);
         return -2;
     }
     int tid = thread_count++;
-    spinlock_release(&thread_alloc_lock);
+    spinlock_release_irqrestore(&thread_alloc_lock, rflags);
 
     uint8_t* stack = (uint8_t*)kmalloc(THREAD_STACK_SIZE);
     if (!stack) return -3;

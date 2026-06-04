@@ -28,11 +28,7 @@
 #include "process.h"
 #include "gcb.h"
 #include "../fs/partition.h"
-
-static inline char to_lower(char c){ return (c>='A'&&c<='Z')? (char)(c+32): c; }
-static int streq(const char* a, const char* b){ while(*a && *b){ if(*a!=*b) return 0; ++a; ++b; } return *a==0 && *b==0; }
-static int startswith(const char* s,const char* p){ while(*p){ if(*s++!=*p++) return 0; } return 1; }
-static int str_len(const char* s){ int n=0; while(s && s[n]) n++; return n; }
+#include "../common/lib.h"
 
 static void list_cb(const char* name, int isDir){ console_write(isDir?"[D] ":"[F] "); console_writeln(name); }
 
@@ -74,9 +70,6 @@ static void path_resolve(char* out, const char* cwd, const char* in){
     for (int k=0; tmp[k]; ++k) out[k]=tmp[k]; out[ti]=0;
 }
 
-static void u64_to_dec(uint64_t v, char* buf){ int n=0; if(v==0){ buf[n++]='0'; buf[n]=0; return; } char tmp[32]; int t=0; while(v){ tmp[t++] = (char)('0'+(v%10)); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
-static void u32_to_dec(uint32_t v, char* buf){ u64_to_dec((uint64_t)v, buf); }
-
 static void input_set_line(char* line, int* plen, const char* src){
     while(*plen > 0){ console_putc('\b'); (*plen)--; }
     int i=0; if (src){ while(src[i] && i < 255){ line[i]=src[i]; i++; } }
@@ -114,9 +107,6 @@ static const char* history_get_offset(int offset){
     return history_buf[idx];
 }
 
-static int str_eq(const char* a, const char* b){ int i=0; while(a && b && a[i] && b[i]){ if(a[i]!=b[i]) return 0; i++; } return a && b && a[i]==0 && b[i]==0; }
-static void str_copy(char* dst, const char* src, int cap){ int i=0; if(cap<=0) return; while(src && src[i] && i<cap-1){ dst[i]=src[i]; i++; } dst[i]=0; }
-
 static int parse_u64_dec(const char* s, uint64_t* out){ if(!s||!*s) return -1; uint64_t v=0; for(int i=0; s[i]; ++i){ char c=s[i]; if(c<'0'||c>'9') return -2; uint64_t d=(uint64_t)(c-'0'); uint64_t nv = v*10u + d; if (nv < v) return -3; v = nv; } *out=v; return 0; }
 static int parse_u32_dec(const char* s, uint32_t* out){ uint64_t v=0; int r=parse_u64_dec(s,&v); if(r!=0||v>0xFFFFFFFFu) return r ? r : -3; *out=(uint32_t)v; return 0; }
 static int parse_hex8(const char* s, uint8_t* out){ if(!s||!*s) return -1; uint32_t v=0; int i=0; for(; s[i] && i<2; ++i){ char c=s[i]; if(c>='0'&&c<='9') v = (v<<4) | (uint32_t)(c-'0'); else { char lc = (c>='A'&&c<='Z')?(c+32):c; if(lc>='a'&&lc<='f') v = (v<<4) | (uint32_t)(10 + lc-'a'); else return -2; } } if(s[i]) return -3; *out=(uint8_t)v; return 0; }
@@ -138,13 +128,19 @@ static int parse_two_args(const char* in, char* a, char* b, int cap) {
     return 0;
 }
 
+static void hang_task(void) {
+    serial_writeln("[hangtest] Starting infinite loop in user mode...");
+    for(;;);
+}
+
 static const char* g_commands[] = {
     "help","arch","uptime","sleep","ls","pwd","cd","cat","echo","touch","cp","mv","mkdir","rm","stat",
     "runtests","selftest","allocstress","schedtest","inttest","cputest","iotest","defrag","relocate","relocate-status","pmm","qemu-run","qemu-headless",
     "heapshrink","reboot","shutdown","relocator-start","relocator-stop","relocator-threshold","relocator-interval","relocator-status",
     "smptest", "dmatest", "cachetest", "foxfs_bench", "keyword", "biotest", "vfstest", "foxfstest",
-    "concurrencytest", "crashrecoverytest", "defragdmatest"
+    "concurrencytest", "crashrecoverytest", "defragdmatest", "ps", "kill", "hangtest"
 };
+
 
 static int collect_command_matches(const char* prefix, const char** out, int cap) {
     int count = 0;
@@ -259,7 +255,7 @@ static void system_shutdown_cleanup(void) {
     serial_writeln("[sys] shutdown: cleanup complete");
 }
 
-static void reboot_machine(void){
+void reboot_machine(void){
     system_shutdown_cleanup();
     
     serial_writeln("[sys] reboot: cpu reset via keyboard controller");
@@ -290,7 +286,7 @@ static void reboot_machine(void){
     for(;;){ __asm__ __volatile__("hlt"); }
 }
 
-static void poweroff_machine(void){
+void poweroff_machine(void){
     system_shutdown_cleanup();
     
     serial_writeln("[sys] poweroff: attempting ACPI PM");
@@ -441,6 +437,11 @@ void kernel_main(const boot_info_t* boot) {
 
     process_init();
 
+    vfs_init();
+    vfs_mount_ramfs();
+    gpu_init(boot);
+    serial_writeln("[foxos] gpu init done");
+
     memzero(&GCB, sizeof(GCB));
     GCB.magic = GCB_MAGIC;
     GCB.scheduler_state = (void*)process_get_table();
@@ -451,22 +452,25 @@ void kernel_main(const boot_info_t* boot) {
     rust_init(&GCB);
     serial_writeln("[foxos] rust handshake ready");
 
-    /* Run boot self-tests to validate PMM and paging (alloc stress is manual via shell) */
-    run_boot_self_tests();
-
-    serial_writeln("[foxos] initializing interrupts...");
     idt_enable_interrupts();
     serial_writeln("[foxos] interrupts enabled");
+
+    run_boot_self_tests();
 
     /* scheduler: enable basic threading with an idle task */
     scheduler_init();
     scheduler_set_idle(idle_thread);
     extern void kflushtd_init(void);
     kflushtd_init();
+
     scheduler_start();
     serial_writeln("[foxos] scheduler started");
 
+    extern void rust_watchdog_start(void);
+    scheduler_create(rust_watchdog_start);
+    
     smp_init();
+
     GCB.cpu_count = smp_cpu_count();
 
     /* Auto-print arch and PMM info for headless testing */
@@ -484,7 +488,6 @@ void kernel_main(const boot_info_t* boot) {
 
         if (boot) {
             char fbbuf[64];
-            /* print framebuffer info */
             serial_writeln("[auto] framebuffer:");
             u64_to_dec(boot->framebuffer.framebuffer_base, fbbuf); serial_write("[auto] base: "); serial_writeln(fbbuf);
             u64_to_dec(boot->framebuffer.framebuffer_size, fbbuf); serial_write("[auto] size: "); serial_writeln(fbbuf);
@@ -496,17 +499,14 @@ void kernel_main(const boot_info_t* boot) {
     }
 
     binit();
-    vfs_init();
-    vfs_mount_ramfs();
-    gpu_init(boot);
-    serial_writeln("[foxos] gpu init done");
     initrd_load_into_ramfs();
     extern void load_tss_into_ramfs(void);
     load_tss_into_ramfs();
     console_writeln("vfs: ramfs mounted, initrd loaded");
     serial_writeln("[foxos] vfs/initrd ready");
 
-    /* Auto-launch TSS for headless verification/testing */
+    /* Auto-launch TSS disabled to prevent conflicts with verification script */
+    /*
     serial_writeln("[auto] attempting to exec /bin/tss.fx...");
     int _tss_r = sys_exec("/bin/tss.fx", 0, 0);
     if (_tss_r == 0) {
@@ -514,6 +514,7 @@ void kernel_main(const boot_info_t* boot) {
     } else {
         serial_write("[auto] TSS spawn failed: "); serial_u64((uint64_t)_tss_r); serial_writeln("");
     }
+    */
 
 #ifdef DISK_MODE_HDD
     ata_init();
@@ -547,6 +548,10 @@ void kernel_main(const boot_info_t* boot) {
 
     for (;;) {
         int ch = keyboard_getchar();
+        if (ch == -1) {
+            extern int serial_getc(void);
+            ch = serial_getc();
+        }
         if (ch == -1) { relocator_poll(); __asm__ __volatile__("hlt"); continue; }
 
         if (ch == KBD_KEY_UP) {
@@ -568,7 +573,7 @@ void kernel_main(const boot_info_t* boot) {
             serial_write("\n[cmd] "); serial_writeln(line);
             if (len > 0) {
                 int last_idx = (history_head - 1 + HISTORY_MAX) % HISTORY_MAX;
-                if (!(history_count > 0 && str_eq(history_buf[last_idx], line))) {
+                if (!(history_count > 0 && streq(history_buf[last_idx], line))) {
                     str_copy(history_buf[history_head], line, sizeof(history_buf[history_head]));
                     history_head = (history_head + 1) % HISTORY_MAX;
                     if (history_count < HISTORY_MAX) history_count++;
@@ -641,9 +646,7 @@ void kernel_main(const boot_info_t* boot) {
             } else if (startswith(line, "sleep ")) {
                 uint64_t ms = 0;
                 if (parse_u64_dec(line+6, &ms)==0){
-                    scheduler_stop();
-                    timer_sleep(ms);
-                    scheduler_start();
+                    timer_sleep_blocking(ms);
                     console_writeln("woke up");
                     serial_writeln("woke up");
                 }
@@ -654,10 +657,15 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "pwd")) {
                 console_writeln(cwd);
             } else if (streq(line, "tss")) {
-                if (sys_exec("/bin/tss.fx", 0, 0) == 0) {
-                    console_writeln("launched tss");
+                console_writeln("Warning: TSS requires a functional GPU and VFS.");
+                console_writeln("Attempting to launch /bin/tss.fx...");
+                int res = sys_exec("/bin/tss.fx", 0, 0);
+                if (res == 0) {
+                    console_writeln("tss spawned successfully.");
                 } else {
-                    console_writeln("tss failed to launch");
+                    console_write("Error: tss failed to launch (code: ");
+                    char eb[32]; u64_to_dec((uint64_t)res, eb);
+                    console_write(eb); console_writeln(")");
                 }
             } else if (startswith(line, "cd ")) {
                 char path[128]; path_resolve(path, cwd, line+3); vfs_stat_t st; if (vfs_stat(path,&st)==0 && st.isDir){ str_copy(cwd, path, sizeof(cwd)); console_writeln("ok"); } else { console_writeln("cd: no such dir"); }
@@ -752,10 +760,6 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "iotest")) {
                 serial_writeln("[cmd] iotest");
                 run_io_integration_test(); console_writeln("iotest done");
-            } else if (streq(line, "tss")) {
-                serial_writeln("[cmd] tss");
-                sys_exec("/bin/tss.fx", 0, 0);
-                console_writeln("tss spawned");
             } else if (streq(line, "smptest")) {
 
                 serial_writeln("[cmd] smptest");
@@ -769,6 +773,47 @@ void kernel_main(const boot_info_t* boot) {
             } else if (startswith(line, "foxfs_bench")) {
                 serial_writeln("[cmd] foxfs_bench");
                 run_foxfs_bench(); console_writeln("foxfs_bench done");
+            } else if (streq(line, "ps")) {
+                process_t* pt = process_get_table();
+                console_writeln("PID  PPID STATE USER ENTRY      THREADS");
+                for (int i = 0; i < MAX_PROCESSES; i++) {
+                    if (pt[i].state != PROC_UNUSED) {
+                        char buf[128];
+                        char p[16], pp[16], ent[32];
+                        u32_to_dec(pt[i].pid, p);
+                        u32_to_dec(pt[i].ppid, pp);
+                        u64_to_hex(pt[i].user_entry, ent);
+                        const char* st = "UNK";
+                        switch(pt[i].state) {
+                            case PROC_RUNNING: st = "RUN"; break;
+                            case PROC_READY:   st = "RDY"; break;
+                            case PROC_BLOCKED: st = "BLK"; break;
+                            case PROC_ZOMBIE:  st = "ZOM"; break;
+                            default: st = "???"; break;
+                        }
+                        console_write(p); console_write("    ");
+                        console_write(pp); console_write("    ");
+                        console_write(st); console_write("   ");
+                        console_write(pt[i].is_user ? "1" : "0"); console_write("    0x");
+                        console_write(ent); console_write("  ");
+                        char tid[16]; u32_to_dec(pt[i].main_thread_id, tid);
+                        console_writeln(tid);
+                    }
+                }
+            } else if (startswith(line, "kill ")) {
+                uint64_t pid = 0;
+                if (parse_u64_dec(line + 5, &pid) == 0) {
+                    extern int process_terminate(uint32_t pid);
+                    int r = process_terminate((uint32_t)pid);
+                    if (r == 0) console_writeln("ok");
+                    else if (r == -2) console_writeln("kill: cannot kill BSP");
+                    else console_writeln("kill: failed");
+                }
+            } else if (streq(line, "hangtest")) {
+                serial_writeln("[cmd] hangtest");
+                int pid = process_spawn(hang_task, 1);
+                char pbuf[16]; u32_to_dec(pid, pbuf);
+                console_write("Spawned hang task PID: "); console_writeln(pbuf);
             } else if (streq(line, "defrag")) {
                 serial_writeln("[cmd] defrag");
                 int moved = move_defrag_all(); char mb[32]; u64_to_dec((uint64_t)moved, mb);
@@ -831,11 +876,26 @@ void kernel_main(const boot_info_t* boot) {
             } else if (streq(line, "qemu-run")) {
                 serial_writeln("[cmd] qemu-run");
                 console_writeln("Run in QEMU:");
-                console_writeln("  qemu-system-x86_64 -m 16G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -no-reboot");
+                console_writeln("  qemu-system-x86_64 -m 2G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -no-reboot");
             } else if (streq(line, "qemu-headless")) {
                 serial_writeln("[cmd] qemu-headless");
                 console_writeln("Headless verifier:");
-                console_writeln("  qemu-system-x86_64 -m 16G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot");
+                console_writeln("  qemu-system-x86_64 -m 2G -serial stdio -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot");
+            } else if (streq(line, "heartbeat")) {
+                static int hb_count = 0;
+                hb_count++;
+                char hbb[32]; u32_to_dec((uint32_t)hb_count, hbb);
+                console_write("heartbeat: "); console_writeln(hbb);
+                serial_write("heartbeat: "); serial_writeln(hbb);
+            } else if (streq(line, "watchdog-test")) {
+                console_writeln("Testing watchdog... stopping timer interrupts.");
+                serial_writeln("[cmd] watchdog-test: disabling interrupts");
+                __asm__ __volatile__("cli");
+                for(;;);
+            } else if (startswith(line, "sysrq ")) {
+                uint8_t sc = (uint8_t)dec_to_u64(line + 6);
+                extern void sysrq_handle(uint8_t sc);
+                sysrq_handle(sc);
             } else if (streq(line, "heapshrink")) {
                 serial_writeln("[cmd] heapshrink");
                 heap_shrink_all();
@@ -844,9 +904,23 @@ void kernel_main(const boot_info_t* boot) {
                 reboot_machine();
             } else if (streq(line, "shutdown")) {
                 poweroff_machine();
+            } else if (streq(line, "panic")) {
+                serial_writeln("[cmd] manual panic");
+                extern void idt_panic_handler(registers_t* regs, const char* message);
+                registers_t r; memzero(&r, sizeof(r));
+                __asm__ __volatile__("lea (%%rip), %0" : "=r"(r.rip));
+                idt_panic_handler(&r, "Manual system panic triggered via shell");
+            } else if (streq(line, "hang")) {
+                serial_writeln("[cmd] deliberate hang triggered...");
+                __asm__ __volatile__("cli");
+                for(;;);
             } else if (streq(line, "keyword")) {
                 serial_writeln("[cmd] keyword");
                 console_writeln("keyword accepted! foxFS, bio, and VFS are fully operational!");
+            } else if (streq(line, "stability")) {
+                serial_writeln("[cmd] stability");
+                extern void run_stability_test(void);
+                run_stability_test();
             } else if (streq(line, "biotest")) {
                 serial_writeln("[cmd] biotest");
                 run_biotest();

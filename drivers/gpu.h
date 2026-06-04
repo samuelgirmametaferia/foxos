@@ -5,3 +5,4 @@
 void gpu_init(const boot_info_t* boot);
 uint32_t gpu_get_width(void);
 uint32_t gpu_get_height(void);
+uint32_t gpu_get_stride(void);

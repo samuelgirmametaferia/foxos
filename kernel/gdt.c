@@ -114,8 +114,6 @@ void gdt_init(void) {
         "mov $0x10, %%ax\n\t"
         "mov %%ax, %%ds\n\t"
         "mov %%ax, %%es\n\t"
-        "mov %%ax, %%fs\n\t"
-        "mov %%ax, %%gs\n\t"
         "mov %%ax, %%ss\n\t"
         : : : "rax", "memory"
     );
@@ -136,8 +134,6 @@ void gdt_init_ap(void) {
         "mov $0x10, %%ax\n\t"
         "mov %%ax, %%ds\n\t"
         "mov %%ax, %%es\n\t"
-        "mov %%ax, %%fs\n\t"
-        "mov %%ax, %%gs\n\t"
         "mov %%ax, %%ss\n\t"
         : : : "rax", "memory"
     );

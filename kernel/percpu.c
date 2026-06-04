@@ -26,17 +26,15 @@ void percpu_init_bsp(void) {
     percpu_areas[0] = area;
     online_cpu_count = 1;
     
-    /* Set GS base to point to BSP per-CPU area */
-    __asm__ __volatile__(
-        "mov %0, %%rax\n\t"
-        "mov $0xC0000101, %%rcx\n\t"
-        "mov %%rax, %%rdx\n\t"
-        "shr $32, %%rdx\n\t"
-        "wrmsr"
-        : 
-        : "r"((uint64_t)(uintptr_t)area)
-        : "rax", "rcx", "rdx"
-    );
+    /* Set GS base and KERNEL_GS_BASE to point to BSP per-CPU area.
+       GS_BASE (0xC0000101) is used while in kernel.
+       KERNEL_GS_BASE (0xC0000102) is used while in user (swapgs switches them). */
+    uint64_t addr = (uint64_t)(uintptr_t)area;
+    uint32_t low = addr & 0xFFFFFFFF;
+    uint32_t high = addr >> 32;
+
+    __asm__ __volatile__("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high));
+    __asm__ __volatile__("wrmsr" : : "c"(0xC0000102), "a"(low), "d"(high));
     
     serial_writeln("[percpu] BSP initialized");
 }
@@ -62,17 +60,13 @@ void percpu_init_ap(uint32_t cpu_id, uint32_t apic_id) {
     percpu_areas[cpu_id] = area;
     online_cpu_count = cpu_id + 1;
     
-    /* Set GS base for this CPU */
-    __asm__ __volatile__(
-        "mov %0, %%rax\n\t"
-        "mov $0xC0000101, %%rcx\n\t"
-        "mov %%rax, %%rdx\n\t"
-        "shr $32, %%rdx\n\t"
-        "wrmsr"
-        : 
-        : "r"((uint64_t)(uintptr_t)area)
-        : "rax", "rcx", "rdx"
-    );
+    /* Set GS base and KERNEL_GS_BASE for this CPU */
+    uint64_t addr = (uint64_t)(uintptr_t)area;
+    uint32_t low = addr & 0xFFFFFFFF;
+    uint32_t high = addr >> 32;
+
+    __asm__ __volatile__("wrmsr" : : "c"(0xC0000101), "a"(low), "d"(high));
+    __asm__ __volatile__("wrmsr" : : "c"(0xC0000102), "a"(low), "d"(high));
 }
 
 percpu_t* percpu_get(uint32_t cpu_id) {

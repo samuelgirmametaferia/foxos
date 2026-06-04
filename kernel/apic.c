@@ -1,6 +1,7 @@
 #include "apic.h"
 #include "serial.h"
 #include "io.h"
+#include "../common/lib.h"
 
 /* Local APIC base address (typically 0xFEE00000) */
 static uint64_t apic_base = 0xFEE00000;
@@ -96,12 +97,8 @@ void apic_init(void) {
     get_apic_base();
     
     serial_write("[apic] APIC base: 0x");
-    char buf[20]; int n = 0;
-    for (int i = 60; i >= 0; i -= 4) {
-        uint8_t nibble = (apic_base >> i) & 0xF;
-        buf[n++] = (nibble < 10) ? ('0' + nibble) : ('A' + nibble - 10);
-    }
-    buf[n] = 0;
+    char buf[32];
+    u64_to_hex(apic_base, buf);
     serial_writeln(buf);
     
     /* Enable APIC */
@@ -141,17 +138,10 @@ void apic_init(void) {
     }
 
     /* Get APIC ID */
-    uint32_t id = apic_get_id();
+    uint32_t id = apic_read(0x20); // Local APIC ID Register
     serial_write("[apic] Local APIC ID: ");
-    char idbuf[16]; int idn = 0; uint32_t idv = id;
-    if (idv == 0) { idbuf[idn++] = '0'; } else {
-        char tmp[16]; int t = 0;
-        while(idv) { tmp[t++] = '0' + (idv % 10); idv /= 10; }
-        while(t--) idbuf[idn++] = tmp[t];
-    }
-    idbuf[idn] = 0;
-    serial_writeln(idbuf);
-    
+    char idb[16]; u32_to_dec(id >> 24, idb);
+    serial_writeln(idb);
     serial_writeln("[apic] APIC initialized");
 }
 

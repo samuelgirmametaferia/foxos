@@ -23,6 +23,7 @@ typedef struct {
     uint64_t uptime_ms;
     uint32_t fb_width;
     uint32_t fb_height;
+    uint32_t fb_stride;
 } sys_info_t;
 
 static inline uint64_t syscall(uint64_t sys_num, uint64_t a1, uint64_t a2, uint64_t a3) {

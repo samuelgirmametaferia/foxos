@@ -158,6 +158,7 @@ static void outsw(uint16_t port, const void* addr, int count){ const uint16_t* p
 
 int ata_pio_read28(uint32_t lba, void* buf){
     if (!g_ata_present) return -1;
+    // serial_write("[ata] pio_read28 LBA="); serial_u64(lba); serial_writeln("");
     status_wait(STATUS_BSY, 0);
     // 28-bit LBA, 1 sector
     outb(REG_HDDEV, 0xE0 | ((lba>>24)&0x0F));
@@ -169,7 +170,10 @@ int ata_pio_read28(uint32_t lba, void* buf){
     /* respect quiesce state */
     while (g_ata_quiesced) { timer_sleep(1); }
     uint8_t s = status_wait(STATUS_BSY, 0);
-    if (s & (STATUS_ERR|STATUS_DF)) return -2;
+    if (s & (STATUS_ERR|STATUS_DF)) {
+        serial_write("[ata] error reading LBA="); serial_u64(lba); serial_writeln("");
+        return -2;
+    }
     if (!(s & STATUS_DRQ)) return -3;
     insw(REG_DATA, buf, 256);
     return 0;

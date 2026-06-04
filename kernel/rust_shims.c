@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "memory.h"
+#include "idt.h"
 
 void *memcpy(void *dst, const void *src, size_t n) {
     uint8_t *d = (uint8_t*)dst;
@@ -47,18 +48,35 @@ size_t strlen(const char *s) {
 }
 
 void abort(void) {
-    for (;;) {
-        __asm__ __volatile__("hlt");
-    }
+    extern void idt_panic_handler(registers_t* regs, const char* message);
+    registers_t r;
+    memzero(&r, sizeof(r));
+    __asm__ __volatile__("lea (%%rip), %0" : "=r"(r.rip));
+    idt_panic_handler(&r, "Rust/C abort() called");
 }
 
 void __stack_chk_fail(void) {
-    abort();
+    extern void idt_panic_handler(registers_t* regs, const char* message);
+    registers_t r;
+    memzero(&r, sizeof(r));
+    __asm__ __volatile__("lea (%%rip), %0" : "=r"(r.rip));
+    idt_panic_handler(&r, "Stack smashing detected!");
 }
 
-long sysconf(long name) {
-    (void)name;
-    return 4096;
+uint64_t rust_interrupts_save(void) {
+    uint64_t rflags;
+    __asm__ __volatile__("pushfq; pop %0; cli" : "=r"(rflags) :: "memory");
+    return rflags;
+}
+
+void rust_interrupts_restore(uint64_t rflags) {
+    __asm__ __volatile__("push %0; popfq" :: "r"(rflags) : "memory", "cc");
+}
+
+uint64_t read_cr2(void) {
+    uint64_t cr2;
+    __asm__ __volatile__("mov %%cr2, %0" : "=r"(cr2));
+    return cr2;
 }
 
 int mprotect(void *addr, size_t len, int prot) {

@@ -69,20 +69,43 @@ int sys_exec(const char* path, char* const argv[], char* const envp[]) {
             uint64_t filesz = phdrs[i].p_filesz;
             uint64_t offset = phdrs[i].p_offset;
             
-            for (uint64_t off = 0; off < memsz; off += PAGE_SIZE) {
+            serial_write("[loader] segment: vaddr="); serial_u64(vaddr);
+            serial_write(" memsz="); serial_u64(memsz);
+            serial_writeln("");
+
+            uint64_t vaddr_start = vaddr & ~0xFFFULL;
+            uint64_t vaddr_end = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
+            
+            for (uint64_t va = vaddr_start; va < vaddr_end; va += PAGE_SIZE) {
                 paddr_t frame = pmm_alloc_frame();
                 memzero((void*)(uintptr_t)frame, PAGE_SIZE);
-                vmm_map(pml4, vaddr + off, frame, 0x07);
+                vmm_map(pml4, va, frame, 0x07);
                 
-                if (off < filesz) {
-                    uint64_t to_read = (filesz - off > PAGE_SIZE) ? PAGE_SIZE : filesz - off;
-                    sys_lseek(fd, offset + off, 0);
-                    sys_read(fd, (void*)(uintptr_t)frame, to_read);
+                uint64_t page_offset = 0;
+                uint64_t file_offset = 0;
+                uint64_t read_len = 0;
+                
+                if (va < vaddr) {
+                    page_offset = vaddr - va;
+                    file_offset = offset;
+                    read_len = (filesz > (PAGE_SIZE - page_offset)) ? (PAGE_SIZE - page_offset) : filesz;
+                } else {
+                    page_offset = 0;
+                    file_offset = offset + (va - vaddr);
+                    if (va - vaddr < filesz) {
+                        read_len = (filesz - (va - vaddr) > PAGE_SIZE) ? PAGE_SIZE : filesz - (va - vaddr);
+                    }
+                }
+                
+                if (read_len > 0) {
+                    sys_lseek(fd, file_offset, 0);
+                    sys_read(fd, (void*)((uintptr_t)frame + page_offset), read_len);
                 }
             }
         }
     }
     
+    serial_write("[loader] jumping to entry: "); serial_u64(ehdr.e_entry | USER_BASE); serial_writeln("");
     kfree(phdrs);
     sys_close(fd);
     

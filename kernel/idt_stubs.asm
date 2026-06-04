@@ -31,7 +31,13 @@ isr%1:
 %endrep
 
 isr_common:
-    cld
+    ; Check if we came from user mode (CS & 3 != 0)
+    ; Stack: [rsp+0]=int_no, [rsp+8]=err_code, [rsp+16]=rip, [rsp+24]=cs, [rsp+32]=rflags
+    test qword [rsp + 24], 3
+    jz .kernel_mode
+    swapgs
+.kernel_mode:
+
     push r15
     push r14
     push r13
@@ -67,7 +73,14 @@ isr_common:
     pop r13
     pop r14
     pop r15
-    add rsp, 16
+
+    ; Check if we are returning to user mode
+    test qword [rsp + 24], 3
+    jz .kernel_mode_ret
+    swapgs
+.kernel_mode_ret:
+
+    add rsp, 16 ; remove int_no and err_code
     iretq
 
 global idt_load
@@ -77,7 +90,16 @@ idt_load:
 
 global context_restore
 context_restore:
+    ; Similar to isr_common return
     mov rsp, rdi
+    
+    ; CS is at offset 144 in registers_t (15 regs * 8 + int_no * 8 + err_code * 8)
+    ; Wait: rax(0), rbx(8), ..., r15(112), int_no(120), err_code(128), rip(136), cs(144)
+    test qword [rsp + 144], 3
+    jz .kernel_mode_rest
+    swapgs
+.kernel_mode_rest:
+
     pop rax
     pop rbx
     pop rcx
@@ -93,7 +115,7 @@ context_restore:
     pop r13
     pop r14
     pop r15
-    add rsp, 16
+    add rsp, 16 ; skip int_no and err_code
     iretq
 
 global isr_stub_table

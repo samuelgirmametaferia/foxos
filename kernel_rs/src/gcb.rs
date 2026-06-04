@@ -8,10 +8,11 @@ pub struct Gcb {
     pub magic: u64,
     pub panic_flag: AtomicU64,
     pub scheduler_state: *mut c_void,
+    pub global_ticks: AtomicU64,
     pub cpu_count: u32,
     pub log_head: AtomicU32,
     pub log_tail: AtomicU32,
-    pub _pad0: [u8; 24],
+    pub _pad0: [u8; 16],
     pub current_log: [u8; 1008],
 }
 

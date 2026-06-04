@@ -2,9 +2,15 @@
 #include "io.h"
 #include "keyboard.h"
 #include "serial.h"
+#include "console.h"
 #include "idt.h"
+#include "timer.h"
 #include "../fs/devfs.h"
 #include "../kernel/spinlock.h"
+#include "../kernel/memory.h"
+#include "../kernel/sched.h"
+#include "../kernel/process.h"
+#include "../common/lib.h"
 
 #define KBD_DATA 0x60
 #define KBD_STATUS 0x64
@@ -23,8 +29,63 @@ static inline int kbd_output_full(void) { return (inb(KBD_STATUS) & 0x01) != 0; 
 
 // Modifier state
 static uint8_t shift_down = 0;   // either LSHIFT (0x2A) or RSHIFT (0x36)
+static uint8_t ctrl_down = 0;    // either LCTRL (0x1D)
+static uint8_t alt_down = 0;     // either LALT (0x38)
 static uint8_t caps_lock = 0;    // toggled by 0x3A
 static uint8_t e0_prefix = 0;    // track 0xE0 extended scancodes
+
+void sysrq_handle(uint8_t sc) {
+    if (sc == 0x58) { // F12
+        serial_writeln("\n[SYSRQ] F12 pressed - System Diagnostic Dump");
+        console_set_color(14, 0); // Yellow on Black
+        console_writeln("\n--- SYSTEM DIAGNOSTIC ---");
+        serial_writeln("--- SYSTEM DIAGNOSTIC ---");
+        
+        uint64_t ticks = timer_get_ticks();
+        char tb[32]; u64_to_dec(ticks, tb);
+        console_write("Uptime ticks: "); console_writeln(tb);
+        serial_write("Uptime ticks: "); serial_writeln(tb);
+        
+        int threads = scheduler_get_thread_count();
+        char thb[32]; u32_to_dec(threads, thb);
+        console_write("Active threads: "); console_writeln(thb);
+        serial_write("Active threads: "); serial_writeln(thb);
+        
+        uint64_t free_pg = pmm_free_pages();
+        char fpb[32]; u64_to_dec(free_pg, fpb);
+        console_write("Free RAM pages: "); console_writeln(fpb);
+        serial_write("Free RAM pages: "); serial_writeln(fpb);
+        
+        console_writeln("--- END DIAGNOSTIC ---");
+        serial_writeln("--- END DIAGNOSTIC ---");
+    } else if (sc == 0x17) { // 'I'
+        serial_writeln("\n[SYSRQ] 'I' pressed - Interrupt Status Check");
+        uint64_t rflags;
+        __asm__ __volatile__("pushfq; pop %0" : "=r"(rflags));
+        serial_write("RFLAGS: "); serial_u64(rflags);
+        serial_write(" IF="); serial_u64((rflags >> 9) & 1);
+        serial_writeln("");
+    } else if (sc == 0x25) { // 'K'
+        serial_writeln("\n[SYSRQ] 'K' pressed - Killing current process");
+        process_t* proc = process_get_current();
+        if (proc && proc->pid > 1) {
+            extern int process_terminate(uint32_t pid);
+            process_terminate(proc->pid);
+            console_set_color(12, 0); // Bright Red
+            console_writeln("\n[SYSRQ] Process killed.");
+        } else {
+            serial_writeln("[SYSRQ] Cannot kill kernel/BSP.");
+        }
+    } else if (sc == 0x30) { // 'B'
+        serial_writeln("\n[SYSRQ] 'B' pressed - Emergency Reboot");
+        extern void reboot_machine(void);
+        reboot_machine();
+    } else if (sc == 0x18) { // 'O'
+        serial_writeln("\n[SYSRQ] 'O' pressed - Emergency Shutdown");
+        extern void poweroff_machine(void);
+        poweroff_machine();
+    }
+}
 
 static int shell_get(void) {
     __asm__ __volatile__("cli");
@@ -35,10 +96,9 @@ static int shell_get(void) {
         return -1;
     }
     int ch = shell_buf[shell_tail];
-    shell_tail = (shell_tail + 1) & (sizeof(shell_buf)-1);
+    shell_tail = (shell_tail + 1) % 1024;
     spinlock_release(&kbd_lock);
     __asm__ __volatile__("sti");
-    serial_write("[kbd] shell get: "); serial_putc((char)ch); serial_writeln("");
     return ch;
 }
 
@@ -51,10 +111,9 @@ static int user_get(void) {
         return -1;
     }
     int ch = user_buf[user_tail];
-    user_tail = (user_tail + 1) & (sizeof(user_buf)-1);
+    user_tail = (user_tail + 1) % 1024;
     spinlock_release(&kbd_lock);
     __asm__ __volatile__("sti");
-    serial_write("[kbd] user get: "); serial_putc((char)ch); serial_writeln("");
     return ch;
 }
 
@@ -113,6 +172,8 @@ static void keyboard_isr(registers_t* regs) {
             uint8_t make = sc & 0x7F;
             if (e0_prefix) { e0_prefix = 0; spinlock_release(&kbd_lock); continue; }
             if (make == 0x2A || make == 0x36) shift_down = 0;
+            if (make == 0x1D) ctrl_down = 0;
+            if (make == 0x38) alt_down = 0;
             spinlock_release(&kbd_lock);
             continue;
         }
@@ -121,18 +182,18 @@ static void keyboard_isr(registers_t* regs) {
             e0_prefix = 0;
             if (sc == 0x48) {
                 // Put in shell buffer
-                unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+                unsigned n_shell = (shell_head + 1) % 1024;
                 if (n_shell != shell_tail) { shell_buf[shell_head] = KBD_KEY_UP; shell_head = n_shell; }
                 // Put in user buffer
-                unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+                unsigned n_user = (user_head + 1) % 1024;
                 if (n_user != user_tail) { user_buf[user_head] = KBD_KEY_UP; user_head = n_user; }
             }
             if (sc == 0x50) {
                 // Put in shell buffer
-                unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+                unsigned n_shell = (shell_head + 1) % 1024;
                 if (n_shell != shell_tail) { shell_buf[shell_head] = KBD_KEY_DOWN; shell_head = n_shell; }
                 // Put in user buffer
-                unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+                unsigned n_user = (user_head + 1) % 1024;
                 if (n_user != user_tail) { user_buf[user_head] = KBD_KEY_DOWN; user_head = n_user; }
             }
             spinlock_release(&kbd_lock);
@@ -140,7 +201,15 @@ static void keyboard_isr(registers_t* regs) {
         }
 
         if (sc == 0x2A || sc == 0x36) { shift_down = 1; spinlock_release(&kbd_lock); continue; }
+        if (sc == 0x1D) { ctrl_down = 1; spinlock_release(&kbd_lock); continue; }
+        if (sc == 0x38) { alt_down = 1; spinlock_release(&kbd_lock); continue; }
         if (sc == 0x3A) { caps_lock ^= 1; spinlock_release(&kbd_lock); continue; }
+
+        if (ctrl_down && alt_down) {
+            sysrq_handle(sc);
+            spinlock_release(&kbd_lock);
+            continue;
+        }
 
         char ch = 0;
         char base = unshifted_map[sc];
@@ -155,14 +224,14 @@ static void keyboard_isr(registers_t* regs) {
 
         if (ch) {
             // Put in shell buffer
-            unsigned n_shell = (shell_head + 1) & (sizeof(shell_buf)-1);
+            unsigned n_shell = (shell_head + 1) % 1024;
             if (n_shell != shell_tail) {
                 shell_buf[shell_head] = ch;
                 shell_head = n_shell;
             }
 
             // Put in user buffer
-            unsigned n_user = (user_head + 1) & (sizeof(user_buf)-1);
+            unsigned n_user = (user_head + 1) % 1024;
             if (n_user != user_tail) {
                 user_buf[user_head] = ch;
                 user_head = n_user;
@@ -197,7 +266,7 @@ int keyboard_getchar_blocking(void) {
     while (1) {
         int ch = shell_get();
         if (ch != -1) return ch;
-        // Yield to other threads with HLT
-        __asm__ __volatile__("hlt");
+        // Yield to other threads using a short sleep
+        timer_sleep(10);
     }
 }

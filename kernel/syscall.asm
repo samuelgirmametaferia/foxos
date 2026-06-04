@@ -10,15 +10,6 @@ extern syscall_handler
 ; R11 = User RFLAGS
 ; CS = Kernel CS, SS = Kernel SS
 ; RSP = User RSP
-; We need to switch to kernel stack.
-; To do this, we use the `swapgs` instruction to get the kernel's per-cpu data in GS.
-; We will assume the kernel stack top is stored at GS:[0] (or similar).
-; Actually, our percpu struct has the kernel stack pointer or we can use the TSS rsp0.
-; Wait, we have the TSS rsp0 in our percpu data? Our percpu init doesn't set GS:[0] to kernel stack.
-; Let's just define a percpu variable for the kernel stack top for syscalls.
-; But wait, sysenter/syscall doesn't load RSP from TSS! Only interrupts do.
-; So we must read the kernel stack from GS manually.
-; Let's assume GS:[0x08] holds the kernel stack top for this CPU.
 
 syscall_entry:
     swapgs
@@ -41,15 +32,21 @@ syscall_entry:
     push r13
     push r14
     push r15
+    push rdi
+    push rsi
+    push rdx
+    push r8
+    push r9
+    push r10
 
     ; The syscall calling convention (System V AMD64 ABI for syscalls):
     ; RAX = System call number
     ; RDI, RSI, RDX, R10, R8, R9 = Args 1-6
-    ; (Note: normal function uses RCX for arg4, syscall uses R10 because RCX is used for RIP)
+    ; System V C ABI expects: RDI, RSI, RDX, RCX, R8, R9
+    ; Move R10 (syscall arg4) to RCX (C arg4)
+    mov rcx, r10
 
-    ; We pass sys_num in arg7 (stack) or we just pass it as arg7.
-    ; C signature: uint64_t syscall_handler(rdi, rsi, rdx, r10, r8, r9, sys_num)
-    ; sys_num is currently in rax.
+    ; We pass sys_num in arg7 (stack)
     push rax ; 7th argument on stack
 
     ; Call the handler
@@ -58,7 +55,13 @@ syscall_entry:
     ; Remove 7th arg
     add rsp, 8
 
-    ; Restore callee-saved registers
+    ; Restore registers
+    pop r10
+    pop r9
+    pop r8
+    pop rdx
+    pop rsi
+    pop rdi
     pop r15
     pop r14
     pop r13
@@ -74,8 +77,4 @@ syscall_entry:
     swapgs
     
     ; Return to user mode
-    ; SYSRETQ expects:
-    ; RCX = RIP
-    ; R11 = RFLAGS
-    ; It will load CS and SS from STAR MSR + 16/8
     o64 sysret

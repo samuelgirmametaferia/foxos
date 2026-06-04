@@ -44,7 +44,7 @@ typedef struct {
     uint32_t magic;
     uint32_t transaction_id;
     uint32_t block_count;
-    uint32_t blocks[1021]; // Fits in 4KB
+    uint32_t blocks[125]; // Fits in 512B
 } foxfs_journal_block_t;
 
 typedef struct {

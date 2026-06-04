@@ -57,6 +57,7 @@ KERNEL_PARTITION_C="$FS_DIR/partition.c"
 KERNEL_GPU_C="$DRIVERS_DIR/gpu.c"
 KERNEL_MOUSE_C="$DRIVERS_DIR/mouse.c"
 KERNEL_LOADER_C="$KDIR/loader.c"
+KERNEL_LIB_C="$COMMON_DIR/lib.c"
 KERNEL_SYSCALL_ASM="$KDIR/syscall.asm"
 KERNEL_ENTRY_C="$BOOT_DIR/uefi_main.c"
 LINKER_SCRIPT="$KDIR/kernel.ld"
@@ -95,6 +96,7 @@ KOBJ_PARTITION="$BUILD/partition.o"
 KOBJ_GPU="$BUILD/gpu.o"
 KOBJ_MOUSE="$BUILD/mouse.o"
 KOBJ_LOADER="$BUILD/loader.o"
+KOBJ_LIB="$BUILD/lib.o"
 KOBJ_SYSCALL_ASM="$BUILD/syscall_asm.o"
 KOBJ_IDT="$BUILD/idt.o"
 KOBJ_IDT_STUBS="$BUILD/idt_stubs.o"
@@ -183,6 +185,9 @@ clang $CFLAGS_CORE -c "$KERNEL_GPU_C" -o "$KOBJ_GPU"
 clang $CFLAGS_CORE -c "$KERNEL_MOUSE_C" -o "$KOBJ_MOUSE"
 clang $CFLAGS_CORE -c "$KERNEL_LOADER_C" -o "$KOBJ_LOADER"
 
+echo "Compiling common lib..."
+clang $CFLAGS_CORE -c "$KERNEL_LIB_C" -o "$KOBJ_LIB"
+
 echo "Compiling serial..."
 clang $CFLAGS_CORE -c "$KERNEL_SERIAL_C" -o "$KOBJ_SERIAL"
 
@@ -245,7 +250,7 @@ RUST_LIB="$RUST_DIR/target/$RUST_TARGET_USED/release/libfoxos_rs.a"
 
 echo "Linking kernel ELF ($LINKER_SCRIPT)..."
 ld.lld -m elf_x86_64 -T "$LINKER_SCRIPT" -nostdlib -o "$KELF" \
-  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_FAT32" "$KOBJ_BIO" "$KOBJ_FOXFS" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_PERCPU" "$KOBJ_APIC" "$KOBJ_IO_WAIT" "$KOBJ_GDT" "$KOBJ_SYSCALL_C" "$KOBJ_SYSCALL_ASM" "$KOBJ_PROCESS" "$KOBJ_RUST_SHIMS" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER" "$KOBJ_DEVFS" "$KOBJ_PARTITION" "$KOBJ_GPU" "$KOBJ_MOUSE" "$KOBJ_LOADER" "$BUILD/tss_fs.o" --whole-archive "$RUST_LIB" --no-whole-archive
+  "$KOBJ_KERNEL_ENTRY" "$KOBJ_C" "$KOBJ_KBD" "$KOBJ_CONS" "$KOBJ_MEM" "$KOBJ_RELOC" "$KOBJ_QUIESCE" "$KOBJ_RELOCATOR" "$KOBJ_TESTS" "$KOBJ_VFS" "$KOBJ_RAMFS" "$KOBJ_INITRD" "$KOBJ_FAT32" "$KOBJ_BIO" "$KOBJ_FOXFS" "$KOBJ_ATA" "$KOBJ_SERIAL" "$KOBJ_SCHED" "$KOBJ_SMP" "$KOBJ_PERCPU" "$KOBJ_APIC" "$KOBJ_IO_WAIT" "$KOBJ_GDT" "$KOBJ_SYSCALL_C" "$KOBJ_SYSCALL_ASM" "$KOBJ_PROCESS" "$KOBJ_RUST_SHIMS" "$KOBJ_IDT" "$KOBJ_IDT_STUBS" "$KOBJ_TIMER" "$KOBJ_DEVFS" "$KOBJ_PARTITION" "$KOBJ_GPU" "$KOBJ_MOUSE" "$KOBJ_LOADER" "$KOBJ_LIB" "$BUILD/tss_fs.o" --whole-archive "$RUST_LIB" --no-whole-archive
 
 echo "Linking UEFI loader EFI application..."
 lld-link /nologo /subsystem:efi_application /entry:efi_main /nodefaultlib /machine:x64 /base:0x400000 /fixed /out:"$UEFI_BIN" "$KOBJ_ENTRY"
@@ -304,20 +309,19 @@ if [[ -n "$QEMU_CODE" ]]; then
   if [[ -n "$QEMU_VARS" ]]; then
     cp -f "$QEMU_VARS" "$BUILD/OVMF_VARS.fd"
   fi
-  HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display gtk -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+  HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-2G} -display gtk -no-shutdown -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
   if [[ -n "$QEMU_VARS" ]]; then
     echo "Run in QEMU:"
-    # Prefer GUI run when DISPLAY is available, otherwise recommend headless with serial-over-TCP
+    # Prefer GUI run when DISPLAY is available, otherwise recommend headless
   if [ -n "${DISPLAY:-}" ]; then
-    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display gtk -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-2G} -display gtk -no-shutdown -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
     echo "$HUMAN_QEMU_CMD"
     echo "Headless verifier:"
-    echo "qemu-system-x86_64 -m ${QEMU_MEM:-16G} -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
+    echo "qemu-system-x86_64 -m ${QEMU_MEM:-2G} -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=build/OVMF_VARS.fd -drive if=ide,format=raw,file=build/esp.img -display none -monitor unix:build/qemu-monitor.sock,server,nowait -no-reboot"
   else
-    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-16G} -display none -no-shutdown -serial tcp:127.0.0.1:4444,server,nowait -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
-    echo "No DISPLAY detected — recommended headless run with serial TCP:"
+    HUMAN_QEMU_CMD="qemu-system-x86_64 -m ${QEMU_MEM:-2G} -display none -no-shutdown -serial stdio -drive if=pflash,format=raw,readonly=on,file=$QEMU_CODE -drive if=pflash,format=raw,file=$BUILD/OVMF_VARS.fd -drive if=ide,format=raw,file=$ESP_IMG -no-reboot"
+    echo "No DISPLAY detected — recommended headless run:"
     echo "$HUMAN_QEMU_CMD"
-    echo "Connect to serial with: nc 127.0.0.1 4444"
   fi
   fi
 

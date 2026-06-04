@@ -14,17 +14,17 @@ typedef struct {
 
 /* Acquire spinlock (spins until lock acquired) */
 static inline void spinlock_acquire(spinlock_t* lock) {
+    /* Note: In a real kernel, we should disable interrupts here to prevent deadlocks 
+       if an interrupt handler tries to acquire the same lock. */
     while (1) {
         uint8_t expected = 0;
-        uint8_t result;
         __asm__ __volatile__(
             "lock cmpxchgb %2, %0"
-            : "+m"(lock->locked), "=a"(expected)
-            : "r"((uint8_t)1), "1"(expected)
+            : "+m"(lock->locked), "+a"(expected)
+            : "r"((uint8_t)1)
             : "cc", "memory"
         );
         if (expected == 0) break;
-        /* Brief pause to reduce bus contention */
         __asm__ __volatile__("pause");
     }
 }
@@ -37,6 +37,19 @@ static inline void spinlock_release(spinlock_t* lock) {
         : 
         : "memory"
     );
+}
+
+/* Enhanced IRQ-safe spinlock functions */
+static inline uint64_t spinlock_acquire_irqsave(spinlock_t* lock) {
+    uint64_t rflags;
+    __asm__ __volatile__("pushfq; pop %0; cli" : "=r"(rflags) :: "memory");
+    spinlock_acquire(lock);
+    return rflags;
+}
+
+static inline void spinlock_release_irqrestore(spinlock_t* lock, uint64_t rflags) {
+    spinlock_release(lock);
+    __asm__ __volatile__("push %0; popfq" :: "r"(rflags) : "memory", "cc");
 }
 
 /* Try to acquire spinlock (non-blocking) */

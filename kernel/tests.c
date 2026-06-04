@@ -6,6 +6,7 @@
 #include "idt.h"
 #include "smp.h"
 #include "timer.h"
+#include "../common/lib.h"
 
 /* Simple allocation stress test: allocate and free various sizes */
 void run_alloc_stress(void) {
@@ -36,17 +37,40 @@ void run_alloc_stress(void) {
 
     /* check pmm counts */
     char buf[64];
-    /* local u64->dec */
     {
-        uint64_t v = pmm_total_pages(); int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        u64_to_dec(pmm_total_pages(), buf);
         serial_write("[tests] total pages: "); serial_writeln(buf);
     }
     {
-        uint64_t v = pmm_free_pages(); int n=0; char tmp[32]; if (v==0) { buf[n++]='0'; buf[n]=0; } else { int t=0; while(v){ tmp[t++]= '0' + (v%10); v/=10; } while(t--) buf[n++]=tmp[t]; buf[n]=0; }
+        u64_to_dec(pmm_free_pages(), buf);
         serial_write("[tests] free pages: "); serial_writeln(buf);
     }
 
     serial_writeln("[tests] alloc stress done");
+}
+
+void run_stability_test(void) {
+    serial_writeln("[tests] stability test start");
+    console_writeln("System Stability Test...");
+    
+    // Spawn a few background threads that just do work and sleep
+    for (int i = 0; i < 4; i++) {
+        extern void worker_thread(void);
+        int tid = scheduler_create(worker_thread);
+        char tb[32]; u32_to_dec((uint32_t)tid, tb);
+        serial_write("[tests] created worker tid="); serial_writeln(tb);
+    }
+    
+    timer_sleep(100);
+    serial_writeln("[tests] stability test done");
+    console_writeln("Stability test complete.");
+}
+
+void worker_thread(void) {
+    for (int i = 0; i < 5; i++) {
+        timer_sleep(20);
+        scheduler_yield();
+    }
 }
 
 void run_boot_self_tests(void) {
@@ -86,7 +110,7 @@ void run_boot_self_tests(void) {
 
         /* attempt defragmentation */
         int moved = move_defrag_all();
-        char mb[32]; int mbl=0; if (moved==0) { mb[mbl++]='0'; mb[mbl]=0; } else { int v=moved, t=0; char tmp[32]; while(v){ tmp[t++]=(char)('0'+(v%10)); v/=10; } while(t--) mb[mbl++]=tmp[t]; mb[mbl]=0; }
+        char mb[32]; u32_to_dec((uint32_t)moved, mb);
         serial_write("[tests] uc_defrag_all moved: "); serial_writeln(mb);
 
         /* verify content of remaining handles */

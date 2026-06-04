@@ -34,12 +34,13 @@ uint64_t process_create_pml4(void) {
     uint64_t* pml4 = (uint64_t*)(uintptr_t)pml4_phys;
     for (int i = 0; i < 512; i++) pml4[i] = 0;
     
-    // Copy kernel's PML4 identity entries
+    // Copy only kernel's identity mapping (PML4[0])
     uint64_t kernel_pml4_phys = read_cr3();
     uint64_t* kernel_pml4 = (uint64_t*)(uintptr_t)kernel_pml4_phys;
-    for (int i = 0; i < 512; i++) {
-        pml4[i] = kernel_pml4[i];
-    }
+    pml4[0] = kernel_pml4[0];
+    
+    // Set up recursive mapping for the new PML4 itself
+    pml4[511] = pml4_phys | 0x03u; // P | R/W
     
     return pml4_phys;
 }
@@ -88,8 +89,12 @@ static uint64_t build_process_paging(void) {
     return pml4_phys;
 }
 
+uint32_t process_get_count(void) {
+    return next_pid - 1;
+}
+
 void process_init(void) {
-    spinlock_acquire(&process_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&process_lock);
     for (int i = 0; i < MAX_PROCESSES; i++) {
         processes[i].pid = 0;
         processes[i].ppid = 0;
@@ -112,7 +117,7 @@ void process_init(void) {
     processes[0].main_thread_id = 0;
     
     next_pid = 2;
-    spinlock_release(&process_lock);
+    spinlock_release_irqrestore(&process_lock, rflags);
     serial_writeln("[process] Subsystem initialized (PID 1 active)");
 }
 
@@ -122,18 +127,22 @@ process_t* process_get_current(void) {
     extern uint32_t scheduler_get_thread_pid(int thread_id);
     uint32_t pid = scheduler_get_thread_pid(tid);
     
+    uint64_t rflags = spinlock_acquire_irqsave(&process_lock);
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processes[i].pid == pid && processes[i].state != PROC_UNUSED) {
-            return &processes[i];
+            process_t* res = &processes[i];
+            spinlock_release_irqrestore(&process_lock, rflags);
+            return res;
         }
     }
+    spinlock_release_irqrestore(&process_lock, rflags);
     return &processes[0]; // Fallback to PID 1
 }
 
 extern int scheduler_create_user(void (*entry)(void), uint64_t user_rsp, uint32_t pid);
 
 int process_spawn_elf(uint64_t pml4, uint64_t entry) {
-    spinlock_acquire(&process_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&process_lock);
     int slot = -1;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processes[i].state == PROC_UNUSED) {
@@ -142,7 +151,7 @@ int process_spawn_elf(uint64_t pml4, uint64_t entry) {
         }
     }
     if (slot == -1) {
-        spinlock_release(&process_lock);
+        spinlock_release_irqrestore(&process_lock, rflags);
         return -1;
     }
     
@@ -155,23 +164,28 @@ int process_spawn_elf(uint64_t pml4, uint64_t entry) {
     
     processes[slot].page_directory = pml4;
     
-    // Create stack for user process
+    // Create stack for user process (64KB = 16 pages)
     uint64_t v_stack_base = 0x803FEFD000;
-    paddr_t stack_phys = pmm_alloc_frame();
-    vmm_map(pml4, v_stack_base - PAGE_SIZE, stack_phys, 0x07);
+    for (int i = 0; i < 16; i++) {
+        paddr_t stack_phys = pmm_alloc_frame();
+        vmm_map(pml4, v_stack_base - (i + 1) * PAGE_SIZE, stack_phys, 0x07);
+    }
     
     processes[slot].user_stack_base = v_stack_base;
     processes[slot].user_entry = entry;
     
+    serial_write("[process] spawn elf entry="); serial_u64(entry);
+    serial_write(" stack="); serial_u64(v_stack_base); serial_writeln("");
+
     int tid = scheduler_create_user((void(*)(void))entry, v_stack_base, pid);
     processes[slot].main_thread_id = tid;
     
-    spinlock_release(&process_lock);
+    spinlock_release_irqrestore(&process_lock, rflags);
     return (int)pid;
 }
 
 int process_spawn(void (*entry)(void), int is_user) {
-    spinlock_acquire(&process_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&process_lock);
     int slot = -1;
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processes[i].state == PROC_UNUSED) {
@@ -180,7 +194,7 @@ int process_spawn(void (*entry)(void), int is_user) {
         }
     }
     if (slot == -1) {
-        spinlock_release(&process_lock);
+        spinlock_release_irqrestore(&process_lock, rflags);
         return -1;
     }
     
@@ -214,7 +228,7 @@ int process_spawn(void (*entry)(void), int is_user) {
         processes[slot].main_thread_id = tid;
     }
     
-    spinlock_release(&process_lock);
+    spinlock_release_irqrestore(&process_lock, rflags);
     
     char pbuf[32];
     {
@@ -262,6 +276,30 @@ void process_exit(uint64_t code) {
     scheduler_set_thread_state_idle(proc->main_thread_id);
     
     scheduler_yield();
+}
+
+int process_terminate(uint32_t pid) {
+    uint64_t rflags = spinlock_acquire_irqsave(&process_lock);
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (processes[i].pid == pid && processes[i].state != PROC_UNUSED) {
+            if (pid <= 1) {
+                spinlock_release_irqrestore(&process_lock, rflags);
+                return -2; // Cannot kill BSP
+            }
+            processes[i].state = PROC_ZOMBIE;
+            processes[i].exit_code = 0xDEAD; // Killed
+            
+            // Set thread state to idle
+            extern void scheduler_set_thread_state_idle(int thread_id);
+            scheduler_set_thread_state_idle(processes[i].main_thread_id);
+            
+            spinlock_release_irqrestore(&process_lock, rflags);
+            serial_write("[process] Terminated PID "); serial_u64(pid); serial_writeln("");
+            return 0;
+        }
+    }
+    spinlock_release_irqrestore(&process_lock, rflags);
+    return -1; // Not found
 }
 
 int process_wait(uint32_t pid, uint64_t* exit_code) {

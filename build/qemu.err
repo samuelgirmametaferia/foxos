@@ -1,0 +1,2 @@
+nohup: ignoring input
+qemu-system-x86_64: terminating on signal 1 from pid 11255 ()

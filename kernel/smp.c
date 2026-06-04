@@ -161,15 +161,19 @@ void smp_init(void) {
         timer_sleep(1); // Wait 1ms
 
         // Wait for the AP to boot up and clear ap_stack_ptr (acknowledgment)
-        int timeout = 1000;
+        int timeout = 10000000;
         while (*(volatile uint64_t*)(0x8000 + 16) != 0 && --timeout > 0) {
-            timer_sleep(1);
+            __asm__ __volatile__("pause");
         }
 
         if (timeout == 0) {
-            serial_writeln("[smp] ERROR: AP boot timed out!");
+            serial_writeln("[smp] ERROR: AP boot timed out (no ACK)!");
         } else {
-            serial_writeln("[smp] AP booted successfully!");
+            serial_writeln("[smp] AP ACK received!");
+            
+            // Wait a bit more for it to print its online message
+            for(volatile int i=0; i<1000000; i++) __asm__ __volatile__("pause");
+            serial_writeln("[smp] AP boot sequence complete.");
         }
     }
 }
@@ -189,22 +193,21 @@ void ap_kernel_entry(void) {
     // 1. Disable interrupts until we are ready
     __asm__ __volatile__("cli");
 
-    // 2. Load the GDT and TSS for this AP
-    // (This replaces the old bsp_gdt load)
-    gdt_init_ap();
-
-    // 2b. Initialize syscall MSRs for this AP
-    syscall_init_ap();
-
-    // 4. Load the system IDT
-    idt_load_for_ap();
-
-    // 5. Read CPU ID and APIC ID assigned by the BSP from the low memory area
+    // 2. Read CPU ID and APIC ID assigned by the BSP from the low memory area
     uint32_t cpu_id = (uint32_t)*(volatile uint64_t*)(0x8000 + 32);
     uint32_t apic_id = (uint32_t)*(volatile uint64_t*)(0x8000 + 40);
 
-    // 6. Initialize per-CPU area for this core
+    // 3. Initialize per-CPU area for this core (sets up GS base)
     percpu_init_ap(cpu_id, apic_id);
+
+    // 4. Load the GDT and TSS for this AP
+    gdt_init_ap();
+
+    // 5. Initialize syscall MSRs for this AP
+    syscall_init_ap();
+
+    // 6. Load the system IDT
+    idt_load_for_ap();
 
     // 7. Enable Local APIC on this core (Vector 255 + APIC enable)
     uint32_t sivr = apic_read(0x0F0); // SIVR is at register 0x0F0

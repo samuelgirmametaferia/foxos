@@ -267,14 +267,25 @@ static void* heap_realloc_block(void* ptr, uint32_t size) {
 }
 
 void memzero(void* ptr, uint32_t len) {
-    uint8_t* p = (uint8_t*)ptr;
-    for (uint32_t i = 0; i < len; ++i) p[i] = 0;
+    uint64_t* p64 = (uint64_t*)ptr;
+    uint32_t len64 = len / 8;
+    for (uint32_t i = 0; i < len64; ++i) p64[i] = 0;
+    
+    uint8_t* p8 = (uint8_t*)ptr + (len64 * 8);
+    uint32_t rem = len % 8;
+    for (uint32_t i = 0; i < rem; ++i) p8[i] = 0;
 }
 
 void memcopy(void* dst, const void* src, uint32_t len) {
-    uint8_t* d = (uint8_t*)dst;
-    const uint8_t* s = (const uint8_t*)src;
-    for (uint32_t i = 0; i < len; ++i) d[i] = s[i];
+    uint64_t* d64 = (uint64_t*)dst;
+    const uint64_t* s64 = (const uint64_t*)src;
+    uint32_t len64 = len / 8;
+    for (uint32_t i = 0; i < len64; ++i) d64[i] = s64[i];
+    
+    uint8_t* d8 = (uint8_t*)dst + (len64 * 8);
+    const uint8_t* s8 = (const uint8_t*)src + (len64 * 8);
+    uint32_t rem = len % 8;
+    for (uint32_t i = 0; i < rem; ++i) d8[i] = s8[i];
 }
 
 static ucdesc_t* get_uc(uchandle_t h) {
@@ -290,70 +301,64 @@ static paddr_t frame_addr_from_chunk(uint32_t idx) {
     return addr_for_frame_index((uint64_t)idx);
 }
 
+static spinlock_t vmm_lock = SPINLOCK_INIT;
+
 void vmm_map(uint64_t pml4_phys, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
+    uint64_t rflags = spinlock_acquire_irqsave(&vmm_lock);
     uint64_t* pml4 = (uint64_t*)(uintptr_t)pml4_phys;
-    
+
     uint64_t pml4_idx = (vaddr >> 39) & 0x1FF;
     uint64_t pdpt_idx = (vaddr >> 30) & 0x1FF;
     uint64_t pd_idx   = (vaddr >> 21) & 0x1FF;
     uint64_t pt_idx   = (vaddr >> 12) & 0x1FF;
 
-    /* Tracing: log requested mapping */
-    serial_write("[vmm] map request: pml4="); serial_u64(pml4_phys);
-    serial_write(" vaddr="); serial_u64(vaddr);
-    serial_write(" paddr="); serial_u64(paddr);
-    serial_write(" flags="); serial_u64(flags);
-    serial_writeln("");
-    
     if (!(pml4[pml4_idx] & 0x01)) {
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pml4[pml4_idx] = frame | 0x07; // P | R/W | U
-        serial_write("[vmm] allocated pml4 frame="); serial_u64(frame); serial_writeln("");
     }
-    
+
     uint64_t* pdpt = (uint64_t*)(uintptr_t)(pml4[pml4_idx] & ~0xFFFULL);
     if (!(pdpt[pdpt_idx] & 0x01)) {
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pdpt[pdpt_idx] = frame | 0x07;
-        serial_write("[vmm] allocated pdpt frame="); serial_u64(frame); serial_writeln("");
     }
-    
+
     uint64_t* pd = (uint64_t*)(uintptr_t)(pdpt[pdpt_idx] & ~0xFFFULL);
     if (!(pd[pd_idx] & 0x01)) {
         paddr_t frame = pmm_alloc_frame();
         memzero((void*)(uintptr_t)frame, PAGE_SIZE);
         pd[pd_idx] = frame | 0x07;
-        serial_write("[vmm] allocated pd frame="); serial_u64(frame); serial_writeln("");
     } else {
-        /* If the PD entry is a 2MiB large page (PS bit set), split it into a PT
-           so we can create 4KiB mappings safely. This avoids treating a 2MiB
-           page entry as a pointer to a page table (which would corrupt memory). */
         const uint64_t PD_PS = (1ull << 7);
         if (pd[pd_idx] & PD_PS) {
             uint64_t old = pd[pd_idx];
-            /* Base address of 2MiB page */
-            uint64_t base2m = old & ~0x1FFFFFULL; /* clear low 21 bits */
-            /* Allocate new page table */
+            uint64_t base2m = old & ~0x1FFFFFULL;
             paddr_t new_pt = pmm_alloc_frame();
             memzero((void*)(uintptr_t)new_pt, PAGE_SIZE);
             uint64_t* pt = (uint64_t*)(uintptr_t)new_pt;
-            /* Build 4KiB entries covering the 2MiB region */
-            uint64_t small_flags = (old & 0xFFFULL) & ~PD_PS; /* preserve P/R/W/U, clear PS */
+            uint64_t small_flags = (old & 0xFFFULL) & ~PD_PS;
             for (int i = 0; i < 512; i++) {
                 pt[i] = (base2m + ((uint64_t)i * PAGE_SIZE)) | small_flags;
             }
-            /* Replace PD entry with pointer to the new PT */
-            pd[pd_idx] = (uint64_t)new_pt | 0x07; /* Present | R/W | User */
-            serial_write("[vmm] split 2MiB PD entry -> new_pt="); serial_u64(new_pt); serial_writeln("");
+            pd[pd_idx] = (uint64_t)new_pt | 0x07;
+            serial_write("[vmm] split 2MiB pd["); serial_u64(pd_idx);
+            serial_write("] -> new_pt="); serial_u64(new_pt); serial_writeln("");
+            
+            uint64_t cr3;
+            __asm__ __volatile__("mov %%cr3, %0" : "=r"(cr3));
+            __asm__ __volatile__("mov %0, %%cr3" :: "r"(cr3) : "memory");
         }
     }
-    
+
     uint64_t* pt = (uint64_t*)(uintptr_t)(pd[pd_idx] & ~0xFFFULL);
     pt[pt_idx] = paddr | flags;
-    serial_write("[vmm] set pte pt_idx="); serial_u64(pt_idx); serial_write(" entry="); serial_u64(pt[pt_idx]); serial_writeln("");
+    
+    __asm__ __volatile__("invlpg (%0)" :: "r"(vaddr) : "memory");
+    spinlock_release_irqrestore(&vmm_lock, rflags);
 }
+
 
 void mem_init(const boot_info_t* boot) {
     serial_writeln("[mem] mem_init start");
@@ -474,8 +479,8 @@ void mem_init(const boot_info_t* boot) {
     /* reserve the bitmap area itself so it isn't reused */
     pmm_reserve_range((paddr_t)bitmap_addr, bitmap_bytes * 2);
 
-    /* reserve the zero page to avoid NULL physical allocations */
-    pmm_reserve_range(0, PAGE_SIZE);
+    /* reserve the first 1MB to avoid UEFI/BIOS data structures and NULL physical allocations */
+    pmm_reserve_range(0, 0x100000);
 
     /* reserve kernel/loader/handoff regions if provided */
     if (boot && boot->magic == FOX_BOOT_INFO_MAGIC) {
@@ -546,14 +551,14 @@ void setup_identity_paging(void) {
     /* set PML4[0] -> PDPT */
     uint64_t* pml4 = (uint64_t*)(uintptr_t)pml4_phys;
     uint64_t* pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
-    pml4[0] = pdpt_phys | 0x07u;
+    pml4[0] = pdpt_phys | 0x03u; // P | R/W
 
     /* set recursive mapping in PML4[511] -> PML4 */
-    pml4[511] = pml4_phys | 0x07u;
+    pml4[511] = pml4_phys | 0x03u; // P | R/W
 
     /* fill PDPT entries */
     for (uint64_t i = 0; i < pd_count; ++i) {
-        pdpt[i] = (pd_phys_base + i * PAGE_SIZE) | 0x07u;
+        pdpt[i] = (pd_phys_base + i * PAGE_SIZE) | 0x03u; // P | R/W
     }
 
     /* fill PDs with 2MiB pages */
@@ -563,7 +568,7 @@ void setup_identity_paging(void) {
         for (uint64_t e = 0; e < 512; ++e) {
             uint64_t phys = (page_index << 21); /* page_index * 2MiB */
             if (phys >= bytes) { pd[e] = 0; }
-            else { pd[e] = phys | 0x87u; }
+            else { pd[e] = phys | 0x83u; } // P | R/W | PS
             page_index++;
         }
     }
@@ -630,11 +635,11 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
     static uint64_t last_idx = 0;
     TRACE_LOG(serial_write("[trace] pmm_alloc_contiguous_pages enter pages="); serial_u64(pages); serial_writeln(""););
     
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     
     if (pages == 0 || pages > pmm_free || pages > pmm_total) {
         TRACE_LOG(serial_writeln("[trace] pmm_alloc_contiguous_pages fail early"););
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return 0;
     }
 
@@ -655,7 +660,7 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
                         last_idx = idx + 1;
                         TRACE_LOG(serial_write("[trace] pmm_alloc_contiguous_pages allocated single idx="); serial_u64(idx);
                                   serial_write(" addr="); serial_u64((uintptr_t)addr); serial_writeln(""););
-                        spinlock_release(&pmm_lock);
+                        spinlock_release_irqrestore(&pmm_lock, rflags);
                         return addr;
                     }
                     ++bit;
@@ -663,7 +668,7 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
             }
         }
         TRACE_LOG(serial_writeln("[trace] pmm_alloc_contiguous_pages single no space"););
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return 0;
     }
 
@@ -671,7 +676,7 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
     uint64_t limit = (pmm_total >= pages) ? (pmm_total - pages + 1) : 0;
     if (limit == 0) {
         TRACE_LOG(serial_writeln("[trace] pmm_alloc_contiguous_pages no space (limit=0)"););
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return 0;
     }
 
@@ -692,7 +697,7 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
             last_idx = pos + pages;
             TRACE_LOG(serial_write("[trace] pmm_alloc_contiguous_pages allocated start="); serial_u64(pos);
                       serial_write(" addr="); serial_u64((uintptr_t)addr); serial_writeln(""););
-            spinlock_release(&pmm_lock);
+            spinlock_release_irqrestore(&pmm_lock, rflags);
             return addr;
         }
 
@@ -708,7 +713,7 @@ paddr_t pmm_alloc_contiguous_pages(uint64_t pages) {
     }
 
     TRACE_LOG(serial_writeln("[trace] pmm_alloc_contiguous_pages no space (multi)"););
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
     return 0;
 }
 
@@ -720,15 +725,15 @@ void pmm_free_contiguous_pages(paddr_t addr, uint64_t pages) {
     if (!addr || pages == 0) return;
     if (addr < (paddr_t)pmm_base) return;
     
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     uint64_t start = frame_index_for_addr(addr);
     if (start >= pmm_total) {
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return;
     }
     if (pages > pmm_total - start) pages = pmm_total - start;
     for (uint64_t i = 0; i < pages; ++i) frame_mark_free(start + i);
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
 }
 
 void pmm_free_frame(paddr_t addr) {
@@ -736,16 +741,16 @@ void pmm_free_frame(paddr_t addr) {
 }
 
 uint64_t pmm_total_pages(void) {
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     uint64_t res = pmm_total;
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
     return res;
 }
 
 uint64_t pmm_free_pages(void) {
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     uint64_t res = pmm_free;
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
     return res;
 }
 
@@ -754,11 +759,11 @@ void pmm_pin_page(paddr_t paddr) {
     uint64_t idx = frame_index_for_addr(paddr);
     uint64_t w = bit_word(idx);
     uint32_t mask = bit_mask(idx);
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     if (w < pmm_bitmap_words) {
         pmm_pin_bitmap[w] |= mask;
     }
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
 }
 
 void pmm_unpin_page(paddr_t paddr) {
@@ -766,11 +771,11 @@ void pmm_unpin_page(paddr_t paddr) {
     uint64_t idx = frame_index_for_addr(paddr);
     uint64_t w = bit_word(idx);
     uint32_t mask = bit_mask(idx);
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     if (w < pmm_bitmap_words) {
         pmm_pin_bitmap[w] &= ~mask;
     }
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
 }
 
 
@@ -861,9 +866,9 @@ void pmm_dump_stats(void) {
 
 void* kmalloc(uint32_t size) {
     if (size == 0) return NULL;
-    spinlock_acquire(&heap_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&heap_lock);
     void* res = heap_alloc(size);
-    spinlock_release(&heap_lock);
+    spinlock_release_irqrestore(&heap_lock, rflags);
     return res;
 }
 
@@ -877,17 +882,18 @@ void* kcalloc(uint32_t count, uint32_t size) {
 }
 
 void* krealloc(void* ptr, uint32_t size) {
-    spinlock_acquire(&heap_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&heap_lock);
     void* res = heap_realloc_block(ptr, size);
-    spinlock_release(&heap_lock);
+    spinlock_release_irqrestore(&heap_lock, rflags);
     return res;
 }
 
 void kfree(void* ptr) {
-    spinlock_acquire(&heap_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&heap_lock);
     heap_free_block(ptr);
-    spinlock_release(&heap_lock);
+    spinlock_release_irqrestore(&heap_lock, rflags);
 }
+
 
 uchandle_t uc_alloc(uint64_t bytes) {
     TRACE_LOG(serial_write("[trace] uc_alloc enter bytes="); serial_u64(bytes); serial_writeln(""););
@@ -899,7 +905,7 @@ uchandle_t uc_alloc(uint64_t bytes) {
         return 0;
     }
 
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     ucdesc_t* d = NULL;
     for (uint32_t i = 0; i < MAX_UC; ++i) {
         if (uc_table[i].magic == 0) {
@@ -909,7 +915,7 @@ uchandle_t uc_alloc(uint64_t bytes) {
     }
     if (!d) {
         TRACE_LOG(serial_writeln("[trace] uc_alloc no descriptor"););
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return 0;
     }
 
@@ -919,9 +925,9 @@ uchandle_t uc_alloc(uint64_t bytes) {
     const uint32_t CONTIG_THRESHOLD = 16; /* pages */
     if (need >= CONTIG_THRESHOLD) {
         TRACE_LOG(serial_write("[trace] uc_alloc attempting contiguous for pages="); serial_u64(need); serial_writeln(""););
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         paddr_t base = pmm_alloc_contiguous_pages(need);
-        spinlock_acquire(&pmm_lock);
+        rflags = spinlock_acquire_irqsave(&pmm_lock);
         if (base) {
             uint64_t start_idx = frame_index_for_addr(base);
             for (uint32_t i = 0; i < need; ++i) d->chunk_idx[i] = (uint32_t)(start_idx + i);
@@ -934,9 +940,9 @@ uchandle_t uc_alloc(uint64_t bytes) {
 
     /* Fallback: allocate individual frames */
     for (; allocated < need; ++allocated) {
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         paddr_t addr = pmm_alloc_frame();
-        spinlock_acquire(&pmm_lock);
+        rflags = spinlock_acquire_irqsave(&pmm_lock);
         if (!addr) { TRACE_LOG(serial_write("[trace] uc_alloc frame alloc failed at allocated="); serial_u64(allocated); serial_writeln("");); break; }
         d->chunk_idx[allocated] = (uint32_t)frame_index_for_addr(addr);
     }
@@ -945,14 +951,14 @@ uchandle_t uc_alloc(uint64_t bytes) {
         TRACE_LOG(serial_write("[trace] uc_alloc cleaning up allocated="); serial_u64(allocated); serial_writeln(""););
         for (uint32_t j = 0; j < allocated; ++j) {
             uint32_t cid = d->chunk_idx[j];
-            spinlock_release(&pmm_lock);
+            spinlock_release_irqrestore(&pmm_lock, rflags);
             pmm_free_frame(addr_for_frame_index((uint64_t)cid));
-            spinlock_acquire(&pmm_lock);
+            rflags = spinlock_acquire_irqsave(&pmm_lock);
         }
         d->magic = 0;
         d->total_chunks = 0;
         d->used_bytes = 0;
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return 0;
     }
 
@@ -961,29 +967,29 @@ uchandle_t uc_alloc(uint64_t bytes) {
     d->magic = (rnd32() | 1u);
     TRACE_LOG(serial_write("[trace] uc_alloc success magic="); serial_u32(d->magic); serial_writeln(""););
     uchandle_t h = d->magic;
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
     return h;
 }
 
 int uc_free(uchandle_t h) {
-    spinlock_acquire(&pmm_lock);
+    uint64_t rflags = spinlock_acquire_irqsave(&pmm_lock);
     ucdesc_t* d = get_uc(h);
     if (!d) {
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         return -1;
     }
 
     for (uint32_t k = 0; k < d->total_chunks; ++k) {
         uint32_t cid = d->chunk_idx[k];
-        spinlock_release(&pmm_lock);
+        spinlock_release_irqrestore(&pmm_lock, rflags);
         pmm_free_frame(addr_for_frame_index((uint64_t)cid));
-        spinlock_acquire(&pmm_lock);
+        rflags = spinlock_acquire_irqsave(&pmm_lock);
         d->chunk_idx[k] = 0;
     }
     d->magic = 0;
     d->total_chunks = 0;
     d->used_bytes = 0;
-    spinlock_release(&pmm_lock);
+    spinlock_release_irqrestore(&pmm_lock, rflags);
     return 0;
 }
 
